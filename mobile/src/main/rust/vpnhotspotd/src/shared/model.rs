@@ -110,6 +110,9 @@ pub struct SessionConfig {
     pub upstream_generation: u64,
     pub clients: Vec<ClientConfig>,
     pub ipv6_nat: Option<Ipv6NatConfig>,
+    pub disable_ipv4: bool,
+    pub routed_ipv6_prefix: Option<Ipv6Cidr>,
+    pub routed_ipv6_dns: Option<Ipv6Addr>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -454,6 +457,9 @@ mod tests {
             upstream_generation: 0,
             clients: Vec::new(),
             ipv6_nat: None,
+            disable_ipv4: false,
+            routed_ipv6_prefix: None,
+            routed_ipv6_dns: None,
         }
     }
 

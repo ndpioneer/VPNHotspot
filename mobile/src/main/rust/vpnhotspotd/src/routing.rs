@@ -172,11 +172,14 @@ impl Runtime {
     }
 
     async fn reset_changed_ipv4_counter_rules(
-        &mut self,
-        previous: &SessionConfig,
-        next: &SessionConfig,
-    ) {
-        for address in changed_ipv4_forward_counter_addresses(&previous.clients, &next.clients) {
+            &mut self,
+            previous: &SessionConfig,
+            next: &SessionConfig,
+        ) {
+            if previous.disable_ipv4 && next.disable_ipv4 {
+                return;
+            }
+            for address in changed_ipv4_forward_counter_addresses(&previous.clients, &next.clients) {
             let Some(client) = previous
                 .clients
                 .iter()

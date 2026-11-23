@@ -13,6 +13,9 @@ pub(crate) async fn read_counters(
     configs: &[SessionConfig],
 ) -> io::Result<Vec<daemon::TrafficCounter>> {
     let client_macs = client_macs(configs);
+    if client_macs.is_empty() || configs.iter().all(|config| config.disable_ipv4) {
+        return Ok(Vec::new());
+    }
     let mut counters = HashMap::new();
     firewall::restore_stdout_lines(
         IptablesTarget::Ipv4,

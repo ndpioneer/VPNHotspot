@@ -7,9 +7,10 @@ use rtnetlink::packet_route::IpProtocol;
 use crate::{firewall::IptablesTarget, netlink, report};
 use vpnhotspotd::shared::downstream::DownstreamIpv4;
 use vpnhotspotd::shared::model::{
-    mac_string, ClientDnsPorts, ClientIpv6NatPorts, Ipv6NatConfig, Ipv6NatPorts, SessionConfig,
-    SessionPorts, UpstreamConfig, UpstreamRole, ANDROID_ROUTE_TABLE_LOCAL_NETWORK,
-    DAEMON_INTERCEPT_FWMARK_MASK, DAEMON_INTERCEPT_FWMARK_VALUE, DAEMON_TABLE,
+    mac_string, ClientDnsPorts, ClientIpv6NatPorts, Ipv6NatConfig,
+    Ipv6NatPorts, SessionConfig, SessionPorts, UpstreamConfig, UpstreamRole,
+    ANDROID_ROUTE_TABLE_LOCAL_NETWORK, DAEMON_INTERCEPT_FWMARK_MASK,
+    DAEMON_INTERCEPT_FWMARK_VALUE, DAEMON_TABLE,
 };
 use vpnhotspotd::shared::proto::daemon::MasqueradeMode;
 
@@ -17,12 +18,13 @@ use super::iptables::IptablesRule;
 use super::ipv6_nat_firewall::Ipv6NatFirewall;
 use super::ipv6_nat_intercept::Ipv6NatInterceptMode;
 use super::netlink_commands::{
-    IpAddressCommand, IpCommand, IpFamily, IpOperation, IpRouteCommand, IpRuleCommand, RouteType,
-    RuleAction,
+    IpAddressCommand, IpCommand, IpFamily, IpOperation, IpRouteCommand,
+    IpRuleCommand, RouteType, RuleAction,
 };
 use super::{
-    push_unique, rule_priority, RoutingMutation, Runtime, RULE_PRIORITY_DAEMON_BASE,
-    RULE_PRIORITY_UPSTREAM_BASE, RULE_PRIORITY_UPSTREAM_DISABLE_SYSTEM_BASE,
+    push_unique, rule_priority, RoutingMutation, Runtime,
+    RULE_PRIORITY_DAEMON_BASE, RULE_PRIORITY_UPSTREAM_BASE,
+    RULE_PRIORITY_UPSTREAM_DISABLE_SYSTEM_BASE,
     RULE_PRIORITY_UPSTREAM_FALLBACK_BASE,
 };
 
@@ -40,122 +42,140 @@ impl Runtime {
                 },
             );
         }
-        push_unique(
-            &mut mutations,
-            RoutingMutation::EnsureIptablesChain {
-                target: IptablesTarget::Ipv4,
-                table: "nat",
-                chain: "vpnhotspot_dns_nat",
-            },
-        );
-        push_unique(
-            &mut mutations,
-            RoutingMutation::EnsureIptablesChain {
-                target: IptablesTarget::Ipv4,
-                table: "filter",
-                chain: "vpnhotspot_dns_input",
-            },
-        );
-        for rule in self.dns_rules(config) {
-            push_unique(&mut mutations, RoutingMutation::Iptables(rule));
-        }
-        push_unique(
-            &mut mutations,
-            RoutingMutation::Ip(IpCommand::Rule(IpRuleCommand {
-                operation: IpOperation::Replace,
-                family: IpFamily::Ipv4,
-                iif: config.downstream.clone(),
-                priority: rule_priority(RULE_PRIORITY_UPSTREAM_DISABLE_SYSTEM_BASE),
-                action: RuleAction::Unreachable,
-                table: 0,
-                fwmark: None,
-                ip_protocol: None,
-            })),
-        );
-        for chain in ["vpnhotspot_acl", "vpnhotspot_stats"] {
-            push_unique(
-                &mut mutations,
-                RoutingMutation::EnsureIptablesChain {
-                    target: IptablesTarget::Ipv4,
-                    table: "filter",
-                    chain,
-                },
-            );
-        }
-        // The client-specific forwarding filters and counters are added from neighbour snapshots.
-        for rule in self.forward_rules(config) {
-            push_unique(&mut mutations, RoutingMutation::Iptables(rule));
-        }
-        if config.masquerade == MasqueradeMode::Simple {
+        if !config.disable_ipv4 {
             push_unique(
                 &mut mutations,
                 RoutingMutation::EnsureIptablesChain {
                     target: IptablesTarget::Ipv4,
                     table: "nat",
-                    chain: "vpnhotspot_masquerade",
+                    chain: "vpnhotspot_dns_nat",
                 },
             );
             push_unique(
                 &mut mutations,
-                RoutingMutation::Iptables(Self::masquerade_chain_rule()),
+                RoutingMutation::EnsureIptablesChain {
+                    target: IptablesTarget::Ipv4,
+                    table: "filter",
+                    chain: "vpnhotspot_dns_input",
+                },
             );
-            // Upstream-specific MASQUERADE rules are added from upstream snapshots.
-        }
-        let mut seen_upstream_interfaces = HashSet::new();
-        for (interfaces, role) in [
-            (&config.primary_upstream_interfaces, UpstreamRole::Primary),
-            (&config.fallback_upstream_interfaces, UpstreamRole::Fallback),
-        ] {
-            for ifname in interfaces {
-                if !seen_upstream_interfaces.insert(ifname.as_str()) {
-                    continue;
-                }
-                let ifindex = match netlink::link_index(&mut self.connection, ifname).await {
-                    Ok(ifindex) => ifindex,
-                    Err(e) if netlink::is_missing_link(&e) => continue,
-                    Err(e) => {
-                        report::io_with_details(
-                            "routing.resolve_upstream_index",
-                            e,
-                            [("upstream", ifname.as_str())],
-                        );
-                        continue;
-                    }
-                };
-                let upstream = UpstreamConfig {
-                    ifname: ifname.clone(),
-                    role,
-                };
+            for rule in self.dns_rules(config) {
+                push_unique(&mut mutations, RoutingMutation::Iptables(rule));
+            }
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Ip(IpCommand::Rule(IpRuleCommand {
+                    operation: IpOperation::Replace,
+                    family: IpFamily::Ipv4,
+                    iif: config.downstream.clone(),
+                    priority: rule_priority(
+                        RULE_PRIORITY_UPSTREAM_DISABLE_SYSTEM_BASE,
+                    ),
+                    action: RuleAction::Unreachable,
+                    table: 0,
+                    fwmark: None,
+                    ip_protocol: None,
+                })),
+            );
+            for chain in ["vpnhotspot_acl", "vpnhotspot_stats"] {
                 push_unique(
                     &mut mutations,
-                    RoutingMutation::Ip(IpCommand::Rule(IpRuleCommand {
-                        operation: IpOperation::Replace,
-                        family: IpFamily::Ipv4,
-                        iif: config.downstream.clone(),
-                        priority: rule_priority(match upstream.role {
-                            UpstreamRole::Primary => RULE_PRIORITY_UPSTREAM_BASE,
-                            UpstreamRole::Fallback => RULE_PRIORITY_UPSTREAM_FALLBACK_BASE,
-                        }),
-                        action: RuleAction::Lookup,
-                        // https://android.googlesource.com/platform/system/netd/+/android-5.0.0_r1/server/RouteController.h#37
-                        table: 1000 + ifindex,
-                        fwmark: None,
-                        ip_protocol: None,
-                    })),
+                    RoutingMutation::EnsureIptablesChain {
+                        target: IptablesTarget::Ipv4,
+                        table: "filter",
+                        chain,
+                    },
                 );
-                match config.masquerade {
-                    MasqueradeMode::None => {}
-                    MasqueradeMode::Simple => push_unique(
+            }
+            // The client-specific forwarding filters and counters are added from neighbour snapshots.
+            for rule in self.forward_rules(config) {
+                push_unique(&mut mutations, RoutingMutation::Iptables(rule));
+            }
+            if config.masquerade == MasqueradeMode::Simple {
+                push_unique(
+                    &mut mutations,
+                    RoutingMutation::EnsureIptablesChain {
+                        target: IptablesTarget::Ipv4,
+                        table: "nat",
+                        chain: "vpnhotspot_masquerade",
+                    },
+                );
+                push_unique(
+                    &mut mutations,
+                    RoutingMutation::Iptables(Self::masquerade_chain_rule()),
+                );
+                // Upstream-specific MASQUERADE rules are added from upstream snapshots.
+            }
+            let mut seen_upstream_interfaces = HashSet::new();
+            for (interfaces, role) in [
+                (&config.primary_upstream_interfaces, UpstreamRole::Primary),
+                (
+                    &config.fallback_upstream_interfaces,
+                    UpstreamRole::Fallback,
+                ),
+            ] {
+                for ifname in interfaces {
+                    if !seen_upstream_interfaces.insert(ifname.as_str()) {
+                        continue;
+                    }
+                    let ifindex = match netlink::link_index(
+                        &mut self.connection,
+                        ifname,
+                    )
+                    .await
+                    {
+                        Ok(ifindex) => ifindex,
+                        Err(e) if netlink::is_missing_link(&e) => continue,
+                        Err(e) => {
+                            report::io_with_details(
+                                "routing.resolve_upstream_index",
+                                e,
+                                [("upstream", ifname.as_str())],
+                            );
+                            continue;
+                        }
+                    };
+                    let upstream = UpstreamConfig {
+                        ifname: ifname.clone(),
+                        role,
+                    };
+                    push_unique(
                         &mut mutations,
-                        RoutingMutation::Iptables(self.upstream_masquerade_rule(&upstream)),
-                    ),
-                    MasqueradeMode::Netd => push_unique(
-                        &mut mutations,
-                        RoutingMutation::NetdNat {
-                            downstream: config.downstream.clone(),
-                            upstream: upstream.ifname,
-                        },
-                    ),
+                        RoutingMutation::Ip(IpCommand::Rule(IpRuleCommand {
+                            operation: IpOperation::Replace,
+                            family: IpFamily::Ipv4,
+                            iif: config.downstream.clone(),
+                            priority: rule_priority(match upstream.role {
+                                UpstreamRole::Primary => {
+                                    RULE_PRIORITY_UPSTREAM_BASE
+                                }
+                                UpstreamRole::Fallback => {
+                                    RULE_PRIORITY_UPSTREAM_FALLBACK_BASE
+                                }
+                            }),
+                            action: RuleAction::Lookup,
+                            // https://android.googlesource.com/platform/system/netd/+/android-5.0.0_r1/server/RouteController.h#37
+                            table: 1000 + ifindex,
+                            fwmark: None,
+                            ip_protocol: None,
+                        })),
+                    );
+                    match config.masquerade {
+                        MasqueradeMode::None => {}
+                        MasqueradeMode::Simple => push_unique(
+                            &mut mutations,
+                            RoutingMutation::Iptables(
+                                self.upstream_masquerade_rule(&upstream),
+                            ),
+                        ),
+                        MasqueradeMode::Netd => push_unique(
+                            &mut mutations,
+                            RoutingMutation::NetdNat {
+                                downstream: config.downstream.clone(),
+                                upstream: upstream.ifname,
+                            },
+                        ),
+                    }
                 }
             }
         }
@@ -231,27 +251,37 @@ impl Runtime {
                 Ipv6NatInterceptMode::ProtocolRules => {
                     for (enabled, protocol) in [
                         (
-                            ports.clients.iter().any(|client| client.tcp.is_some()),
+                            ports
+                                .clients
+                                .iter()
+                                .any(|client| client.tcp.is_some()),
                             IpProtocol::Tcp,
                         ),
                         (
-                            ports.clients.iter().any(|client| client.udp.is_some()),
+                            ports
+                                .clients
+                                .iter()
+                                .any(|client| client.udp.is_some()),
                             IpProtocol::Udp,
                         ),
                     ] {
                         if enabled {
                             push_unique(
                                 &mut mutations,
-                                RoutingMutation::Ip(IpCommand::Rule(IpRuleCommand {
-                                    operation: IpOperation::Replace,
-                                    family: IpFamily::Ipv6,
-                                    iif: config.downstream.clone(),
-                                    priority: rule_priority(RULE_PRIORITY_DAEMON_BASE),
-                                    action: RuleAction::Lookup,
-                                    table: DAEMON_TABLE,
-                                    fwmark: None,
-                                    ip_protocol: Some(protocol),
-                                })),
+                                RoutingMutation::Ip(IpCommand::Rule(
+                                    IpRuleCommand {
+                                        operation: IpOperation::Replace,
+                                        family: IpFamily::Ipv6,
+                                        iif: config.downstream.clone(),
+                                        priority: rule_priority(
+                                            RULE_PRIORITY_DAEMON_BASE,
+                                        ),
+                                        action: RuleAction::Lookup,
+                                        table: DAEMON_TABLE,
+                                        fwmark: None,
+                                        ip_protocol: Some(protocol),
+                                    },
+                                )),
                             );
                         }
                     }
@@ -265,7 +295,10 @@ impl Runtime {
                         priority: rule_priority(RULE_PRIORITY_DAEMON_BASE),
                         action: RuleAction::Lookup,
                         table: DAEMON_TABLE,
-                        fwmark: Some((DAEMON_INTERCEPT_FWMARK_VALUE, DAEMON_INTERCEPT_FWMARK_MASK)),
+                        fwmark: Some((
+                            DAEMON_INTERCEPT_FWMARK_VALUE,
+                            DAEMON_INTERCEPT_FWMARK_MASK,
+                        )),
                         ip_protocol: None,
                     })),
                 ),
@@ -278,16 +311,135 @@ impl Runtime {
                 intercept_mode,
             );
         }
+        if let Some(routed_prefix) = config.routed_ipv6_prefix {
+            let mut gw_bytes = routed_prefix.first_address().octets();
+            gw_bytes[15] = 1;
+            let downstream_gw = Ipv6Addr::from(gw_bytes);
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Ip(IpCommand::Address(IpAddressCommand {
+                    operation: IpOperation::Replace,
+                    address: IpAddr::V6(downstream_gw),
+                    prefix_len: routed_prefix.network_length(),
+                    interface: config.downstream.clone(),
+                })),
+            );
+            let mut seen_upstreams = HashSet::new();
+            for ifname in &config.primary_upstream_interfaces {
+                if !seen_upstreams.insert(ifname.as_str()) {
+                    continue;
+                }
+                let ifindex = match netlink::link_index(
+                    &mut self.connection,
+                    ifname,
+                )
+                .await
+                {
+                    Ok(idx) => idx,
+                    Err(_) => continue,
+                };
+                push_unique(
+                    &mut mutations,
+                    RoutingMutation::Ip(IpCommand::Rule(IpRuleCommand {
+                        operation: IpOperation::Replace,
+                        family: IpFamily::Ipv6,
+                        iif: config.downstream.clone(),
+                        priority: rule_priority(RULE_PRIORITY_UPSTREAM_BASE),
+                        action: RuleAction::Lookup,
+                        table: 1000 + ifindex,
+                        fwmark: None,
+                        ip_protocol: None,
+                    })),
+                );
+            }
+            // Block Android system RouterAdvertisementDaemon from broadcasting carrier RAs on downstream
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Iptables(IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "filter",
+                    "OUTPUT",
+                    vec![
+                        "-o".into(),
+                        config.downstream.clone(),
+                        "-p".into(),
+                        "icmpv6".into(),
+                        "--icmpv6-type".into(),
+                        "router-advertisement".into(),
+                        "-m".into(),
+                        "mark".into(),
+                        "!".into(),
+                        "--mark".into(),
+                        "0x00030063/0x0003ffff".into(),
+                        "-j".into(),
+                        "DROP".into(),
+                    ],
+                )),
+            );
+            push_unique(
+                &mut mutations,
+                RoutingMutation::EnsureIptablesChain {
+                    target: IptablesTarget::Ipv6,
+                    table: "filter",
+                    chain: "vpnhotspot_forward",
+                },
+            );
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Iptables(IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "filter",
+                    "FORWARD",
+                    vec!["-j".into(), "vpnhotspot_forward".into()],
+                )),
+            );
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Iptables(IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "filter",
+                    "vpnhotspot_forward",
+                    vec![
+                        "-i".into(),
+                        config.downstream.clone(),
+                        "-s".into(),
+                        routed_prefix.to_string(),
+                        "-j".into(),
+                        "ACCEPT".into(),
+                    ],
+                )),
+            );
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Iptables(IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "filter",
+                    "vpnhotspot_forward",
+                    vec![
+                        "-o".into(),
+                        config.downstream.clone(),
+                        "-d".into(),
+                        routed_prefix.to_string(),
+                        "-j".into(),
+                        "ACCEPT".into(),
+                    ],
+                )),
+            );
+        }
         let mut client_ip_v4 = Vec::new();
         let mut client_macs_v6 = Vec::new();
         for client in &config.clients {
-            for address in &client.ipv4 {
-                if client_ip_v4.contains(&(client.mac, *address)) {
-                    continue;
-                }
-                client_ip_v4.push((client.mac, *address));
-                for rule in Self::client_ipv4_forward_rules(config, client.mac, *address) {
-                    push_unique(&mut mutations, RoutingMutation::Iptables(rule));
+            if !config.disable_ipv4 {
+                for address in &client.ipv4 {
+                    if client_ip_v4.contains(&(client.mac, *address)) {
+                        continue;
+                    }
+                    client_ip_v4.push((client.mac, *address));
+                    for rule in
+                        Self::client_ipv4_forward_rules(config, client.mac, *address)
+                    {
+                        push_unique(&mut mutations, RoutingMutation::Iptables(rule));
+                    }
                 }
             }
             if ipv6_nat.is_some() && !client_macs_v6.contains(&client.mac) {
@@ -325,7 +477,9 @@ impl Runtime {
                 Ipv6NatFirewall::local_special_return_rules(config, ipv6_nat),
             ) && self
                 .has_applied_iptables_rule(Ipv6NatFirewall::filter_input_jump_rule())
-                && self.has_applied_iptables_rules(Ipv6NatFirewall::input_filter_rules(config));
+                && self.has_applied_iptables_rules(
+                    Ipv6NatFirewall::input_filter_rules(config),
+                );
             for ports in &ports.clients {
                 let tcp = ports.tcp.filter(|port| {
                     self.ipv6_nat_port_committed(
@@ -398,23 +552,30 @@ impl Runtime {
             return false;
         };
         session_rules_committed
-            && self.has_applied_iptables_rules(Ipv6NatFirewall::gateway_dns_prelude_rules(
-                config, ipv6_nat, protocol,
-            ))
-            && self.has_applied_iptables_rule(Ipv6NatFirewall::tproxy_listener_rule(
-                config,
-                mac,
-                protocol,
-                port,
-                intercept_mode,
-            ))
+            && self.has_applied_iptables_rules(
+                Ipv6NatFirewall::gateway_dns_prelude_rules(
+                    config, ipv6_nat, protocol,
+                ),
+            )
+            && self.has_applied_iptables_rule(
+                Ipv6NatFirewall::tproxy_listener_rule(
+                    config,
+                    mac,
+                    protocol,
+                    port,
+                    intercept_mode,
+                ),
+            )
     }
 
     fn has_applied_iptables_rule(&self, rule: IptablesRule) -> bool {
         self.applied.contains(&RoutingMutation::Iptables(rule))
     }
 
-    fn has_applied_iptables_rules(&self, rules: impl IntoIterator<Item = IptablesRule>) -> bool {
+    fn has_applied_iptables_rules(
+        &self,
+        rules: impl IntoIterator<Item = IptablesRule>,
+    ) -> bool {
         rules
             .into_iter()
             .all(|rule| self.has_applied_iptables_rule(rule))
@@ -428,7 +589,9 @@ impl Runtime {
                 continue;
             }
             client_macs.push(client.mac);
-            let Some(ports) = self.ports.dns.iter().find(|ports| ports.mac == client.mac) else {
+            let Some(ports) =
+                self.ports.dns.iter().find(|ports| ports.mac == client.mac)
+            else {
                 continue;
             };
             for (protocol, port) in [("tcp", ports.tcp), ("udp", ports.udp)] {
@@ -436,7 +599,8 @@ impl Runtime {
                     continue;
                 };
                 rules.push(self.dns_port_rule(config, client.mac, protocol, port));
-                let [allow, reject] = self.dns_port_guard_rules(config, protocol, port);
+                let [allow, reject] =
+                    self.dns_port_guard_rules(config, protocol, port);
                 rules.push(reject);
                 rules.push(allow);
             }
@@ -790,7 +954,10 @@ impl Runtime {
 }
 
 fn host_subnet(downstream_ipv4: DownstreamIpv4) -> String {
-    let subnet = Ipv4Inet::new(downstream_ipv4.address, downstream_ipv4.prefix_len)
-        .expect("downstream IPv4 prefix length must be <= 32");
+    let subnet = Ipv4Inet::new(
+        downstream_ipv4.address,
+        downstream_ipv4.prefix_len,
+    )
+    .expect("downstream IPv4 prefix length must be <= 32");
     format!("{}/{}", subnet.first_address(), subnet.network_length())
 }

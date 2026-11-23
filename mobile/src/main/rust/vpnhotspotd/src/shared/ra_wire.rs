@@ -12,10 +12,10 @@ const RDNSS_OPTION_TYPE: NdpOptionType = NdpOptionType(25);
 const RDNSS_OPTION_LENGTH_UNITS: u8 = 3;
 const ALL_NODES: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
-pub fn make_current_ra_packet(gateway: Ipv6Inet, mtu: u32) -> Vec<u8> {
+pub fn make_current_ra_packet(advertised_prefix: Ipv6Cidr, dns_server: Ipv6Addr, mtu: u32) -> Vec<u8> {
     RaAdvertisement {
-        dns_server: gateway.address(),
-        advertised_prefix: gateway.network(),
+        dns_server,
+        advertised_prefix,
         mtu,
         router_lifetime: 1800,
         valid_lifetime: 3600,
@@ -143,7 +143,11 @@ mod tests {
     #[test]
     fn current_ra_masks_gateway_to_advertised_prefix() {
         let gateway = Ipv6Inet::new("fd47:6b7c:2186:b452::1".parse().unwrap(), 64).unwrap();
-        let packet = make_current_ra_packet(gateway, 1500);
+        let packet = make_current_ra_packet(
+            gateway.network(),
+            gateway.address(),
+            1500,
+        );
         assert_eq!(
             &packet[32..48],
             &"fd47:6b7c:2186:b452::"

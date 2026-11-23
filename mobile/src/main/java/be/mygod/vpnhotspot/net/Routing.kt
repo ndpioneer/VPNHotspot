@@ -11,6 +11,7 @@ import androidx.collection.ScatterMap
 import androidx.collection.ScatterSet
 import androidx.collection.toScatterSet
 import be.mygod.vpnhotspot.App.Companion.app
+import be.mygod.vpnhotspot.RoutingManager
 import be.mygod.vpnhotspot.net.monitor.TrafficRecorder
 import be.mygod.vpnhotspot.net.monitor.Upstream
 import be.mygod.vpnhotspot.net.monitor.Upstreams
@@ -65,6 +66,8 @@ class Routing(private val caller: Any, private val downstream: String) {
         System,
         Block,
         Nat,
+
+        Routed,
     }
 
     /**
@@ -304,11 +307,27 @@ class Routing(private val caller: Any, private val downstream: String) {
     ) = MutableScatterSet<String>().let { seen ->
         val primaryInterfaces = primaryUpstream.appendInterfaces(seen)
         val fallbackInterfaces = fallbackUpstream.appendInterfaces(seen)
+        val routedPrefix = if (ipv6Mode == Ipv6Mode.Routed) {
+                        primaryUpstream.upstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
+                                val addr = linkAddress.address
+                                addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress && linkAddress.prefixLength == 64
+                            }?.let { linkAddress ->
+                                Ipv6Prefix(linkAddress.address.address.toByteString(), linkAddress.prefixLength)
+                            }
+                    } else null
+                val routedDns = if (ipv6Mode == Ipv6Mode.Routed) {
+                        val dns = primaryUpstream.upstream?.properties?.dnsServers?.firstOrNull { it is Inet6Address }
+                            ?: java.net.InetAddress.getByName("2606:4700:4700::1111")
+                        dns.address.toByteString()
+                    } else null
         SessionConfig(
             downstream = downstream,
             ip_forward = ipForward,
             masquerade = masqueradeMode,
             ipv6_block = ipv6Mode == Ipv6Mode.Block,
+            disable_ipv4 = RoutingManager.disableIpv4,
+            routed_ipv6_prefix = routedPrefix,
+            routed_ipv6_dns = routedDns,
             primary_network = primaryUpstream.upstream?.network?.networkHandle,
             primary_routes = primaryUpstream.upstream?.properties?.allRoutes?.mapNotNull { route ->
                 val destination = route.destination

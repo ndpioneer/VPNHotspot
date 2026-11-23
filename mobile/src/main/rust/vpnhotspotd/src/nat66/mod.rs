@@ -15,10 +15,12 @@ use cidr::Ipv6Inet;
 use crate::{dns, netlink};
 use crate::{platform, report};
 use vpnhotspotd::shared::model::{
-    kernel_release_raw_ipv6_bind_rejection_is_unexpected, mac_string, ClientIpv6NatPorts,
-    Ipv6NatPorts, SessionConfig,
+    kernel_release_raw_ipv6_bind_rejection_is_unexpected, mac_string,
+    ClientIpv6NatPorts, Ipv6NatPorts, SessionConfig,
 };
-use vpnhotspotd::shared::nat66_counter::{Nat66CounterKey, Nat66CounterSource, Nat66Counters};
+use vpnhotspotd::shared::nat66_counter::{
+    Nat66CounterKey, Nat66CounterSource, Nat66Counters,
+};
 use vpnhotspotd::shared::proto::daemon;
 use vpnhotspotd::shared::protocol::daemon_io_error_report_with_details;
 
@@ -91,7 +93,9 @@ impl Runtime {
         netlink: &mut netlink::RequestConnection,
         resources: ProcessResources,
     ) -> Option<Self> {
-        config.ipv6_nat.as_ref()?;
+        if config.ipv6_nat.is_none() && config.routed_ipv6_prefix.is_none() {
+            return None;
+        }
         let config_changed = Arc::new(Notify::new());
         let mut runtime = Self {
             call_id,
@@ -111,67 +115,87 @@ impl Runtime {
             _icmp_registration: None,
         };
         runtime.replace_clients(config);
-        if !runtime
-            .ports
-            .clients
-            .iter()
-            .any(|client| client.tcp.is_some() || client.udp.is_some())
+        if config.ipv6_nat.is_some()
+            && !runtime
+                .ports
+                .clients
+                .iter()
+                .any(|client| client.tcp.is_some() || client.udp.is_some())
         {
             return None;
         }
-        let icmp_registration = match runtime
-            .resources
-            .icmp
-            .register(config, shared.clone(), runtime.counters.clone(), netlink)
-            .await
-        {
-            Ok(registration) => Some(registration),
-            Err(e) => {
-                let kernel_release = platform::kernel_release().ok();
-                if e.raw_os_error() != Some(libc::EADDRNOTAVAIL)
-                    || kernel_release
-                        .as_deref()
-                        .and_then(kernel_release_raw_ipv6_bind_rejection_is_unexpected)
-                        == Some(true)
-                {
-                    let mut details = vec![("downstream".to_owned(), config.downstream.clone())];
-                    if let Some(kernel_release) = kernel_release {
-                        details.push(("kernel_release".to_owned(), kernel_release));
+        let icmp_registration = if config.ipv6_nat.is_some() {
+            match runtime
+                .resources
+                .icmp
+                .register(
+                    config,
+                    shared.clone(),
+                    runtime.counters.clone(),
+                    netlink,
+                )
+                .await
+            {
+                Ok(registration) => Some(registration),
+                Err(e) => {
+                    let kernel_release = platform::kernel_release().ok();
+                    if e.raw_os_error() != Some(libc::EADDRNOTAVAIL)
+                        || kernel_release.as_deref().and_then(
+                            kernel_release_raw_ipv6_bind_rejection_is_unexpected,
+                        ) == Some(true)
+                    {
+                        let mut details = vec![(
+                            "downstream".to_owned(),
+                            config.downstream.clone(),
+                        )];
+                        if let Some(kernel_release) = kernel_release {
+                            details.push((
+                                "kernel_release".to_owned(),
+                                kernel_release,
+                            ));
+                        }
+                        report::report_for(
+                            Some(call_id),
+                            daemon_io_error_report_with_details(
+                                "nat66.icmp_start",
+                                e,
+                                details,
+                            ),
+                        );
                     }
-                    report::report_for(
-                        Some(call_id),
-                        daemon_io_error_report_with_details("nat66.icmp_start", e, details),
-                    );
+                    None
                 }
-                None
             }
+        } else {
+            None
         };
         runtime.ports.icmp_echo = icmp_registration.is_some();
         runtime._icmp_registration = icmp_registration;
-        runtime.ra_task = match netlink::EventConnection::new(&[MulticastGroup::Ipv6Ifaddr])
-            .and_then(|events| {
-                ra::spawn_loop(
-                    shared.clone(),
-                    config_changed.clone(),
-                    events,
-                    netlink::RequestConnection::new()?,
-                    runtime.stop.clone(),
-                    config,
-                )
-            }) {
-            Ok(task) => Some(task),
-            Err(e) => {
-                report::report_for(
-                    Some(call_id),
-                    daemon_io_error_report_with_details(
-                        "nat66.ra_start",
-                        e,
-                        [("downstream", config.downstream.clone())],
-                    ),
-                );
-                None
-            }
-        };
+        runtime.ra_task =
+            match netlink::EventConnection::new(&[MulticastGroup::Ipv6Ifaddr])
+                .and_then(|events| {
+                    ra::spawn_loop(
+                        shared.clone(),
+                        config_changed.clone(),
+                        events,
+                        netlink::RequestConnection::new()?,
+                        runtime.stop.clone(),
+                        config,
+                    )
+                }) {
+                Ok(task) => Some(task),
+                Err(e) => {
+                    report::report_for(
+                        Some(call_id),
+                        daemon_io_error_report_with_details(
+                            "nat66.ra_start",
+                            e,
+                            [("downstream", config.downstream.clone())],
+                        ),
+                    );
+                    None
+                }
+            };
         Some(runtime)
     }
 
@@ -247,8 +271,9 @@ impl Runtime {
             self._icmp_registration = None;
         }
         self.clients.retain(|mac, client| {
-            let committed =
-                committed.and_then(|ports| ports.clients.iter().find(|ports| ports.mac == *mac));
+            let committed = committed.and_then(|ports| {
+                ports.clients.iter().find(|ports| ports.mac == *mac)
+            });
             if committed.and_then(|ports| ports.tcp).is_none() {
                 if let Some(runtime) = client.tcp.take() {
                     runtime.stop.cancel();
@@ -272,20 +297,26 @@ impl Runtime {
         });
     }
 
-    fn start_tcp(&self, config: &SessionConfig, mac: [u8; 6]) -> Option<ClientListenerRuntime> {
+    fn start_tcp(
+        &self,
+        config: &SessionConfig,
+        mac: [u8; 6],
+    ) -> Option<ClientListenerRuntime> {
         let stop = self.stop.child_token();
-        match tproxy::create_tcp_listener(config.reply_mark).and_then(|listener| {
-            let port = listener.local_addr()?.port();
-            tcp::spawn_loop(
-                listener,
-                self.shared.clone(),
-                stop.clone(),
-                self.counters.clone(),
-                self.dns.clone(),
-                mac,
-            )?;
-            Ok(port)
-        }) {
+        match tproxy::create_tcp_listener(config.reply_mark).and_then(
+            |listener| {
+                let port = listener.local_addr()?.port();
+                tcp::spawn_loop(
+                    listener,
+                    self.shared.clone(),
+                    stop.clone(),
+                    self.counters.clone(),
+                    self.dns.clone(),
+                    mac,
+                )?;
+                Ok(port)
+            },
+        ) {
             Ok(port) => Some(ClientListenerRuntime { port, stop }),
             Err(e) => {
                 stop.cancel();
@@ -301,21 +332,27 @@ impl Runtime {
         }
     }
 
-    fn start_udp(&self, config: &SessionConfig, mac: [u8; 6]) -> Option<ClientListenerRuntime> {
+    fn start_udp(
+        &self,
+        config: &SessionConfig,
+        mac: [u8; 6],
+    ) -> Option<ClientListenerRuntime> {
         let stop = self.stop.child_token();
-        match tproxy::create_udp_listener(config.reply_mark).and_then(|listener| {
-            let port = listener.local_addr()?.port();
-            udp::spawn_loop(
-                listener,
-                self.shared.clone(),
-                stop.clone(),
-                self.resources.clone(),
-                self.counters.clone(),
-                self.dns.clone(),
-                mac,
-            )?;
-            Ok(port)
-        }) {
+        match tproxy::create_udp_listener(config.reply_mark).and_then(
+            |listener| {
+                let port = listener.local_addr()?.port();
+                udp::spawn_loop(
+                    listener,
+                    self.shared.clone(),
+                    stop.clone(),
+                    self.resources.clone(),
+                    self.counters.clone(),
+                    self.dns.clone(),
+                    mac,
+                )?;
+                Ok(port)
+            },
+        ) {
             Ok(port) => Some(ClientListenerRuntime { port, stop }),
             Err(e) => {
                 stop.cancel();
@@ -394,10 +431,10 @@ impl Runtime {
         }
         if self.ports.icmp_echo && config.ipv6_nat.is_some() {
             for client in &config.clients {
-                if !active
-                    .iter()
-                    .any(|key| key.mac == client.mac && key.source == Nat66CounterSource::Icmpv6)
-                {
+                if !active.iter().any(|key| {
+                    key.mac == client.mac
+                        && key.source == Nat66CounterSource::Icmpv6
+                }) {
                     active.push(Nat66CounterKey {
                         mac: client.mac,
                         source: Nat66CounterSource::Icmpv6,
@@ -435,7 +472,11 @@ impl Runtime {
         drop(_icmp_registration);
         if let Some(ra_task) = ra_task {
             if let Err(e) = ra_task.await {
-                report::message("nat66.ra_task_join", e.to_string(), "JoinError");
+                report::message(
+                    "nat66.ra_task_join",
+                    e.to_string(),
+                    "JoinError",
+                );
             }
         }
         let Some(ipv6_nat) = snapshot.ipv6_nat.as_ref() else {

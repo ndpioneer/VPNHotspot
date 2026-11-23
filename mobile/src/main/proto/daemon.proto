@@ -56,6 +56,9 @@ message SessionConfig {
   repeated ClientConfig clients = 10;
   optional Ipv6NatConfig ipv6_nat = 11;
   uint64 upstream_generation = 12;
+  bool disable_ipv4 = 13;
+  optional Ipv6Prefix routed_ipv6_prefix = 14;
+  optional bytes routed_ipv6_dns = 15;
 }
 
 enum MasqueradeMode {

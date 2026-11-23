@@ -289,6 +289,16 @@ pub fn read_session_config(config: daemon::SessionConfig) -> io::Result<SessionC
     } else {
         None
     };
+    let routed_ipv6_prefix = config
+        .routed_ipv6_prefix
+        .as_ref()
+        .map(read_ipv6_prefix)
+        .transpose()?;
+    let routed_ipv6_dns = config
+        .routed_ipv6_dns
+        .as_ref()
+        .map(|bytes| read_ipv6(bytes, "routed IPv6 DNS"))
+        .transpose()?;
     Ok(SessionConfig {
         downstream,
         reply_mark: DAEMON_REPLY_MARK,
@@ -304,6 +314,9 @@ pub fn read_session_config(config: daemon::SessionConfig) -> io::Result<SessionC
         upstream_generation: config.upstream_generation,
         clients,
         ipv6_nat,
+        disable_ipv4: config.disable_ipv4,
+        routed_ipv6_prefix,
+        routed_ipv6_dns,
     })
 }
 

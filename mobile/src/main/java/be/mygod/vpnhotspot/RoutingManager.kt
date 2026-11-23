@@ -26,6 +26,8 @@ abstract class RoutingManager(private val caller: Any, val downstream: String, p
     companion object {
         private const val KEY_MASQUERADE_MODE = "service.masqueradeMode"
         private const val KEY_IPV6_MODE = "service.ipv6Mode"
+
+        private const val KEY_DISABLE_IPV4 = "service.disableIpv4"
         var masqueradeMode: MasqueradeMode
             get() = app.pref.run {
                 getString(KEY_MASQUERADE_MODE, null)?.let {
@@ -57,6 +59,9 @@ abstract class RoutingManager(private val caller: Any, val downstream: String, p
                 if (getBoolean("service.disableIpv6", true)) Ipv6Mode.Block else Ipv6Mode.System
             }
             set(value) = app.pref.edit { putString(KEY_IPV6_MODE, value.name) }
+        var disableIpv4: Boolean
+                    get() = app.pref.getBoolean(KEY_DISABLE_IPV4, false)
+                    set(value) = app.pref.edit { putBoolean(KEY_DISABLE_IPV4, value) }
 
         /**
          * Thread safety: needs protection by [monitor]!
@@ -134,6 +139,7 @@ abstract class RoutingManager(private val caller: Any, val downstream: String, p
             ipv6Mode = when (RoutingManager.ipv6Mode) {
                 Ipv6Mode.Block, Ipv6Mode.System -> Ipv6Mode.System
                 Ipv6Mode.Nat -> Ipv6Mode.Nat
+                Ipv6Mode.Routed -> Ipv6Mode.Routed
             }
         }
     }

@@ -1,4 +1,5 @@
 use std::io;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use rtnetlink::MulticastGroup;
@@ -32,19 +33,27 @@ impl Session {
         cancel: &CancellationToken,
     ) -> io::Result<Self> {
         let stop = CancellationToken::new();
-        let mut downstream_events =
-            netlink::EventConnection::new(&[MulticastGroup::Link, MulticastGroup::Ipv4Ifaddr])
-                .with_report_context("session.downstream_ipv4.events")?;
         let mut routing_netlink = netlink::RequestConnection::new()
             .with_report_context("session.downstream_ipv4.netlink")?;
-        let downstream_ipv4 = downstream::wait_ipv4(
-            &mut routing_netlink,
-            &mut downstream_events,
-            &config.downstream,
-            cancel,
-        )
-        .await?;
-        drop(downstream_events);
+        let downstream_ipv4 = if config.disable_ipv4 {
+                    DownstreamIpv4 {
+                        address: Ipv4Addr::UNSPECIFIED,
+                        prefix_len: 0,
+                    }
+                } else {
+                    let mut downstream_events =
+                        netlink::EventConnection::new(&[MulticastGroup::Link, MulticastGroup::Ipv4Ifaddr])
+                            .with_report_context("session.downstream_ipv4.events")?;
+                    let ip = downstream::wait_ipv4(
+                        &mut routing_netlink,
+                        &mut downstream_events,
+                        &config.downstream,
+                        cancel,
+                    )
+                    .await?;
+                    drop(downstream_events);
+                    ip
+                };
         let shared = Arc::new(Mutex::new(config.clone()));
         let mut dns = dns::Runtime::start(
             call_id,
@@ -117,7 +126,9 @@ impl Session {
         let mut nat66_stop_snapshot = None;
         if self.nat66.is_none() {
             let current = self.config.lock().await.clone();
-            if current.ipv6_nat.is_some() && has_client_scoped_ipv6_nat_demand(&config) {
+            if (current.ipv6_nat.is_some() && has_client_scoped_ipv6_nat_demand(&config))
+                || config.routed_ipv6_prefix.is_some()
+            {
                 self.nat66 = nat66::Runtime::start(
                     self.call_id,
                     &config,
@@ -131,6 +142,7 @@ impl Session {
             }
             if self.nat66.is_none()
                 && (current.ipv6_nat.is_none() || has_client_scoped_ipv6_nat_demand(&config))
+                && config.routed_ipv6_prefix.is_none()
             {
                 config.ipv6_nat = None;
             }
@@ -160,12 +172,12 @@ impl Session {
                 }
             };
             self.dns.retain_ports(&committed_ports.dns);
-            if config.ipv6_nat.is_none() || has_client_scoped_ipv6_nat_demand(&config) {
+            if (config.ipv6_nat.is_none() && config.routed_ipv6_prefix.is_none()) || has_client_scoped_ipv6_nat_demand(&config) {
                 if let Some(nat66) = self.nat66.as_mut() {
                     nat66.retain_ports(committed_ports.ipv6_nat.as_ref());
                 }
             }
-            if config.ipv6_nat.is_none() {
+            if config.ipv6_nat.is_none() && config.routed_ipv6_prefix.is_none() {
                 nat66_to_stop = self.nat66.take();
                 nat66_stop_snapshot = Some(current.clone());
             } else if should_disable_uncommitted_ipv6_nat(&config, &committed_ports) {

@@ -100,6 +100,11 @@ import java.net.NetworkInterface
 import java.net.SocketException
 import java.text.NumberFormat
 import java.util.Locale
+import java.net.Inet4Address
+import java.net.Inet6Address
+import be.mygod.vpnhotspot.net.monitor.Upstreams
+import be.mygod.vpnhotspot.RoutingManager
+import be.mygod.vpnhotspot.net.Routing.Ipv6Mode
 
 data class TetheringServiceState(
     val managedIfaces: Set<String> = emptySet(),
@@ -859,6 +864,27 @@ private fun networkInterfaceAddressesText(
     } catch (_: SocketException) { }
     if (macAddress != null && macAddress != MacAddressCompat.ANY_ADDRESS) appendMacAddress(macAddress.toString(), linkStyles)
     if (!macOnly && iface != null) for (address in iface.interfaceAddresses) {
+        val ip = address.address
+        if (RoutingManager.disableIpv4 && ip is Inet4Address) continue
+        if (RoutingManager.ipv6Mode == Ipv6Mode.Routed && ip is Inet6Address && !ip.isLinkLocalAddress && !ip.isLoopbackAddress) {
+            val primaryUpstream = Upstreams.primary.value
+            val routedPrefixBytes = primaryUpstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
+                val addr = linkAddress.address
+                addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress && linkAddress.prefixLength == 64
+            }?.address?.address
+            if (routedPrefixBytes != null) {
+                // Compare first 8 bytes (/64 prefix)
+                val ipBytes = ip.address
+                var match = true
+                for (i in 0 until 8) {
+                    if (ipBytes[i] != routedPrefixBytes[i]) {
+                        match = false
+                        break
+                    }
+                }
+                if (!match) continue // Skip carrier IPv6 address!
+            }
+        }
         if (length > 0) append('\n')
         appendIpAddress(address.address, linkStyles)
         address.networkPrefixLength.also {

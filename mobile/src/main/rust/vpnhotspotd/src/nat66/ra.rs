@@ -73,12 +73,12 @@ pub(crate) fn spawn_loop(
             let now = Instant::now();
             let current = {
                 let current = config.lock().await;
-                if current.ipv6_nat.is_none() {
+                if current.ipv6_nat.is_none() && current.routed_ipv6_prefix.is_none() {
                     break;
                 }
                 current.clone()
             };
-            if current.clients.is_empty() {
+            if current.clients.is_empty() && current.routed_ipv6_prefix.is_none() {
                 if advertising_current_prefix {
                     let mut withdrew_current_prefix = false;
                     if let Some(ipv6_nat) = current.ipv6_nat.as_ref() {
@@ -149,17 +149,23 @@ pub(crate) fn spawn_loop(
                             Vec::new()
                         }
                     };
-                if let Some(ipv6_nat) = current.ipv6_nat.as_ref() {
+                let active_network = current
+                    .routed_ipv6_prefix
+                    .or_else(|| current.ipv6_nat.as_ref().map(|n| n.gateway.network()));
+                if let Some(our_network) = active_network {
                     for prefix in mtu_prefixes {
-                        if prefix != ipv6_nat.gateway {
+                        if prefix.network() != our_network {
                             suppressed_prefixes.insert(prefix, now + SUPPRESSED_RA_WINDOW);
                             send_current = true;
                         }
                     }
                 }
             }
-            let mtu =
-                downstream_mtu(&mut netlink, &current.downstream, "nat66.ra_mtu_lookup").await;
+            let mut mtu = downstream_mtu(&mut netlink, &current.downstream, "nat66.ra_mtu_lookup").await;
+            if let Some(upstream_if) = current.primary_upstream_interfaces.first() {
+                let upstream_mtu = downstream_mtu(&mut netlink, upstream_if, "nat66.ra_upstream_mtu_lookup").await;
+                mtu = mtu.min(upstream_mtu);
+            }
             let mut missing_interface = false;
             let router = match link_local_router(&mut netlink, &current.downstream).await {
                 Ok(router) => router,
@@ -593,15 +599,21 @@ async fn send_ra(
     target: Option<SocketAddrV6>,
     mtu: u32,
 ) -> Result<(), RaSendError> {
-    let ipv6_nat = config
-        .ipv6_nat
-        .as_ref()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing ipv6 NAT config"))
-        .map_err(RaSendError::Setup)?;
+    let (prefix, dns_server) = if let Some(routed_prefix) = config.routed_ipv6_prefix {
+        let dns = config.routed_ipv6_dns.unwrap_or(router.address);
+        (routed_prefix, dns)
+    } else if let Some(ipv6_nat) = config.ipv6_nat.as_ref() {
+        (ipv6_nat.gateway.network(), ipv6_nat.gateway.address())
+    } else {
+        return Err(RaSendError::Setup(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "missing ipv6 NAT or routed config",
+        )));
+    };
     let fd = create_send_socket(&config.downstream, config.reply_mark, router)
         .map_err(RaSendError::Setup)?;
     let destination = router_advertisement_destination(target, router.interface_index);
-    let packet = make_current_ra_packet(ipv6_nat.gateway, mtu);
+    let packet = make_current_ra_packet(prefix, dns_server, mtu);
     send_packet_to(&fd, &packet, SockAddr::from(destination))
         .await
         .map_err(RaSendError::Transmit)

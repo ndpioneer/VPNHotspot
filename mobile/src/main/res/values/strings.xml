@@ -270,6 +270,10 @@
     <!-- Android translation-index match: packages/apps/Settings/res/values/strings.xml:51 -->
     <string name="settings_service_ipv6_mode_system">System</string>
     <string name="settings_service_ipv6_mode_nat">NAT (Userspace)</string>
+    <string name="settings_service_ipv6_mode_routed">Routed (/64)</string>
+    <string name="settings_service_ipv6_mode_routed_summary">Route a delegated /64 IPv6 prefix from the upstream VPN interface without NAT.</string>
+    <string name="settings_service_disable_ipv4">Disable IPv4</string>
+    <string name="settings_service_disable_ipv4_summary">Run hotspot in IPv6-only mode and disable IPv4 forwarding.</string>
     <string name="settings_service_upstream_help">Main upstream interface regex used to reroute downstream traffic. VPN Hotspot itself must be allowed to use that VPN to work. Use &lt;tt&gt;none&lt;/tt&gt;, &lt;tt&gt;a^&lt;/tt&gt;, or another invalid regex to suppress tethering through VPN.</string>
     <string name="settings_upstream_fallback_help">Fallback upstream is used when a VPN leaves some routes on the default network. Use &lt;tt&gt;none&lt;/tt&gt;, &lt;tt&gt;a^&lt;/tt&gt;, or another invalid regex to forbid fallback.</string>
     <string name="settings_service_masquerade_none_summary">Do not rewrite downstream source addresses or ports. This can work better with dummy VPNs such as ad blockers or socksifiers, but should not be used with real VPNs.</string>

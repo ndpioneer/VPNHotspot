@@ -121,6 +121,9 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
             MasqueradeMode.MASQUERADE_MODE_SIMPLE
         } else RoutingManager.masqueradeMode)
     }
+    var disableIpv4 by remember {
+        mutableStateOf(if (inspectionMode) false else RoutingManager.disableIpv4)
+    }
     var ipv6Mode by remember {
         mutableStateOf(if (inspectionMode) Ipv6Mode.Block else RoutingManager.ipv6Mode)
     }
@@ -140,12 +143,15 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
             wifiLockMode = WifiDoubleLock.mode
             RoutingManager.masqueradeMode = RoutingManager.masqueradeMode
             masqueradeMode = RoutingManager.masqueradeMode
+            RoutingManager.disableIpv4 = RoutingManager.disableIpv4
+            disableIpv4 = RoutingManager.disableIpv4
             RoutingManager.ipv6Mode = RoutingManager.ipv6Mode
             ipv6Mode = RoutingManager.ipv6Mode
         }
         DisposableEffect(lifecycleOwner, offloadChanging) {
             fun refresh() {
                 masqueradeMode = RoutingManager.masqueradeMode
+                disableIpv4 = RoutingManager.disableIpv4
                 ipv6Mode = RoutingManager.ipv6Mode
                 wifiLockMode = WifiDoubleLock.mode
                 if (!offloadChanging) offloadEnabled = TetherOffloadManager.enabled
@@ -236,6 +242,18 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
                     },
                 )
             }
+            row(R.string.settings_service_disable_ipv4) {
+                SwitchPreferenceRow(
+                    icon = R.drawable.ic_nat,
+                    title = R.string.settings_service_disable_ipv4,
+                    summary = stringResource(R.string.settings_service_disable_ipv4_summary),
+                    checked = disableIpv4,
+                    onCheckedChange = { enabled ->
+                        disableIpv4 = enabled
+                        if (!inspectionMode) RoutingManager.disableIpv4 = enabled
+                    },
+                    )
+            }
             row(R.string.settings_service_ipv6_mode) {
                 ListPreferenceRow(
                     icon = R.drawable.ic_counter_6,
@@ -244,13 +262,15 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
                         stringResource(R.string.settings_service_ipv6_mode_system),
                         stringResource(R.string.settings_service_ipv6_mode_block),
                         stringResource(R.string.settings_service_ipv6_mode_nat),
+                        stringResource(R.string.settings_service_ipv6_mode_routed),
                     ),
                     entrySummaries = listOf(
                         annotatedStringResource(R.string.settings_service_ipv6_mode_system_summary),
                         annotatedStringResource(R.string.settings_service_ipv6_mode_block_summary),
                         annotatedStringResource(R.string.settings_service_ipv6_mode_nat_summary),
+                        annotatedStringResource(R.string.settings_service_ipv6_mode_routed_summary),
                     ),
-                    values = listOf(Ipv6Mode.System, Ipv6Mode.Block, Ipv6Mode.Nat),
+                    values = listOf(Ipv6Mode.System, Ipv6Mode.Block, Ipv6Mode.Nat, Ipv6Mode.Routed),
                     selectedValue = ipv6Mode,
                     onValueChange = {
                         ipv6Mode = it
