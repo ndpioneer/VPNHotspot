@@ -1,17 +1,19 @@
-# Routed IPv6 & IPv4-Disabled Hotspot Architecture
+# Routed IPv6, IPv4-Disabled Hotspot Architecture & Enhancements
 
 ## Overview
 This repository has been extended beyond the original userspace NAT66 mode to support:
-1. **Pure Routed IPv6 Subnet Forwarding (No NAT):** WireGuard /64 delegated prefix routing with SLAAC RDNSS, MTU clamping, and active carrier-leakage blocking.
+1. **Pure Routed IPv6 Subnet Forwarding (No NAT):** WireGuard /64 delegated prefix routing with SLAAC RDNSS, kernel-level TCP MSS clamping, and active carrier-leakage blocking.
 2. **IPv6-Only Operation (Disable IPv4):** Total suppression of IPv4 forwarding, ARP/DHCP wait loops, and IPv4 iptables setup, designed for native IPv6 + NAT64 deployments.
+3. **Privacy & Freedom Focus:** Complete removal of Google Firebase Analytics, Crashlytics telemetry, and proprietary reporting dependencies.
+4. **Resilient UI State & Reachability Tracking:** Auto-refreshing interface states and neighbor reachability aligned with link-local status.
 
 ---
 
 ## 1. Protobuf IPC (`mobile/src/main/proto/daemon.proto`)
-The `SessionConfig` protobuf message was extended with three fields:
+The `SessionConfig` protobuf message includes:
 - `bool disable_ipv4 = 13`: When `true`, instructs the daemon and routing subsystems to bypass all IPv4 operations.
 - `optional Ipv6Prefix routed_ipv6_prefix = 14`: The delegated `/64` prefix discovered from the upstream tunnel.
-- `optional bytes routed_ipv6_dns = 15`: The IPv6 DNS server (RDNSS) discovered from upstream LinkProperties (or fallback to Cloudflare 2606:4700:4700::1111).
+- `optional bytes routed_ipv6_dns = 15`: The IPv6 DNS server (RDNSS) discovered from upstream LinkProperties (or fallback to Cloudflare `2606:4700:4700::1111`).
 
 ---
 
@@ -19,10 +21,10 @@ The `SessionConfig` protobuf message was extended with three fields:
 - `model.rs`:
   - `SessionConfig` struct includes `disable_ipv4: bool`, `routed_ipv6_prefix: Option<Ipv6Cidr>`, and `routed_ipv6_dns: Option<Ipv6Addr>`.
 - `protocol.rs`:
-  - `read_session_config`: Deserializes the three new protobuf fields into the Rust `SessionConfig`.
+  - `read_session_config`: Deserializes the three protobuf fields into the Rust `SessionConfig`.
 - `ra_wire.rs`:
   - `make_current_ra_packet(advertised_prefix: Ipv6Cidr, dns_server: Ipv6Addr, mtu: u32)`:
-    Decoupled from `gateway.address()`. Emits RFC 4861 Router Advertisements with Prefix Information (autonomous=true, on-link=true, valid=3600, preferred=1800) and RFC 8106 RDNSS options (lifetime=600).
+    Emits RFC 4861 Router Advertisements with Prefix Information (autonomous=true, on-link=true, valid=3600, preferred=1800) and RFC 8106 RDNSS options (lifetime=600).
 
 ---
 
@@ -31,12 +33,16 @@ When `config.routed_ipv6_prefix` is present:
 1. **Address Assignment:** Assigns `<prefix>::1/64` to `config.downstream` via Netlink `IpAddressCommand`.
 2. **Policy Routing:** Installs `ip -6 rule` at priority `20700` (`RULE_PRIORITY_UPSTREAM_BASE`):
    - `iif <downstream> lookup 1000 + ifindex` (pointing directly to WireGuard `tun0`'s routing table).
-3. **Carrier RA Suppression:**
+3. **TCP MSS Clamping:**
+   - Adds an `ip6tables` rule in `mangle` `FORWARD`:
+     `-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`
+   - Clamps client MSS to the tunnel PMTU, preventing Path MTU blackholes and dropped TLS handshakes over encapsulated links.
+4. **Carrier RA Suppression:**
    - Adds an `ip6tables` rule in `OUTPUT` on `filter`:
      `-o <downstream> -p icmpv6 --icmpv6-type router-advertisement -m mark ! --mark 0x00030063/0x0003ffff -j DROP`
    - Blocks Android's system `RouterAdvertisementDaemon` from broadcasting carrier-delegated cellular IPv6 prefixes onto the downstream Wi-Fi interface.
-4. **Firewall Forwarding:** Ensures `vpnhotspot_forward` chain in `filter` table allows bidirectional IPv6 forwarding matching `<prefix>` without any MASQUERADE or NAT.
-5. **IPv4 Bypass:** When `config.disable_ipv4 == true`:
+5. **Firewall Forwarding:** Ensures `vpnhotspot_forward` chain in `filter` table allows bidirectional IPv6 forwarding matching `<prefix>` without any MASQUERADE or NAT.
+6. **IPv4 Bypass:** When `config.disable_ipv4 == true`:
    - All IPv4 iptables chains (`vpnhotspot_dns_nat`, `vpnhotspot_dns_input`, `vpnhotspot_acl`, `vpnhotspot_stats`, `vpnhotspot_masquerade`), IPv4 policy rules, and IPv4 client forward rules are completely bypassed.
 
 ---
@@ -67,11 +73,17 @@ When `config.routed_ipv6_prefix` is present:
 
 ---
 
-## 7. Kotlin Layer (`mobile/src/main/java/be/mygod/vpnhotspot/`)
+## 7. Kotlin Layer & UI Refinements (`mobile/src/main/java/be/mygod/vpnhotspot/`)
 - `Routing.kt`:
   - `Ipv6Mode.Routed` added to `enum class Ipv6Mode`.
   - `nextConfig()`: Auto-discovers the `/64` prefix from `primaryUpstream.upstream?.properties?.linkAddresses` (non-link-local `/64`) and DNS from `dnsServers` (IPv6, fallback to Cloudflare `2606:4700:4700::1111`).
-- `RoutingManager.kt`:
-  - Manages `service.disableIpv4` boolean preference and `service.ipv6Mode`.
 - `SettingsScreen.kt`:
   - Exposes `Disable IPv4` switch and `Routed (/64)` option in the IPv6 Mode selector.
+  - Dynamically hides `IPv4 masquerade mode` when `Disable IPv4` is active.
+- `ClientsScreen.kt`:
+  - Binds client global IPv6 reachability status to the link-local (`fe80::`) neighbor state to prevent stale "reachable" indicators after client disconnect.
+- `TetheringScreen.kt`:
+  - Added a lifecycle-aware 5-second auto-refresh polling loop while resumed, automatically detecting and displaying the assigned `/64` prefix.
+- `App.kt` & Telemetry:
+  - Completely excised Firebase Analytics, FirebaseCrashlytics, and Google Services plugins.
+  - Release APKs auto-signed with debug keystore.

@@ -35,12 +35,12 @@ import be.mygod.vpnhotspot.util.getRootCause
 import be.mygod.vpnhotspot.util.privateLookup
 import be.mygod.vpnhotspot.widget.SmartSnackbar
 import com.google.android.gms.dynamite.DynamiteModule
-import com.google.firebase.analytics.FirebaseAnalytics
-import com.google.firebase.analytics.ParametersBuilder
-import com.google.firebase.analytics.logEvent
-import com.google.firebase.crashlytics.CustomKeysAndValues
-import com.google.firebase.crashlytics.FirebaseCrashlytics
-import com.google.firebase.provider.FirebaseInitProvider
+//import com.google.firebase.analytics.FirebaseAnalytics
+//import com.google.firebase.analytics.ParametersBuilder
+//import com.google.firebase.analytics.logEvent
+//import com.google.firebase.crashlytics.CustomKeysAndValues
+//import com.google.firebase.crashlytics.FirebaseCrashlytics
+//import com.google.firebase.provider.FirebaseInitProvider
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
 import kotlinx.coroutines.GlobalScope
@@ -70,11 +70,11 @@ class App : Application() {
         deviceStorage.moveDatabaseFrom(this, AppDatabase.DB_NAME)
         Services.init { this }
 
-        DynamiteModule::class.java.getDeclaredField("zzg").apply { isAccessible = true }.set(null, false)
+        // DynamiteModule::class.java.getDeclaredField("zzg").apply { isAccessible = true }.set(null, false)
         // call super.attachInfo get around ProviderInfo check
-        FirebaseInitProvider::class.java.privateLookup().findSpecial(ContentProvider::class.java, "attachInfo",
-            MethodType.methodType(Void.TYPE, Context::class.java, ProviderInfo::class.java),
-            FirebaseInitProvider::class.java).bindTo(FirebaseInitProvider()).invokeWithArguments(deviceStorage, null)
+        // FirebaseInitProvider::class.java.privateLookup().findSpecial(ContentProvider::class.java, "attachInfo",
+        //    MethodType.methodType(Void.TYPE, Context::class.java, ProviderInfo::class.java),
+        //    FirebaseInitProvider::class.java).bindTo(FirebaseInitProvider()).invokeWithArguments(deviceStorage, null)
         val isDebug = try {
             when {
                 packageManager.hasSigningCertificate(packageName, byteArrayOf(0x72, 0x4f, 0xff.toByte(), 0xe1.toByte(), 0x7e, 0x11, 0x88.toByte(), 0x53, 0x3c, 0x0d, 0x6a, 0x7a, 0xf3.toByte(), 0xc1.toByte(), 0xdc.toByte(), 0x12, 0x94.toByte(), 0x7c, 0xb5.toByte(), 0x54, 0x32, 0x3a, 0xf2.toByte(), 0xb1.toByte(), 0x87.toByte(), 0xc1.toByte(), 0xf5.toByte(), 0xec.toByte(), 0x19, 0x63, 0xf2.toByte(), 0xb7.toByte()), PackageManager.CERT_INPUT_SHA256) -> false
@@ -85,38 +85,28 @@ class App : Application() {
             e.printStackTrace()
             null
         }
-        FirebaseCrashlytics.getInstance().apply {
-            if (isDebug != null) {
-                setCustomKey("debug", isDebug)
-                setCustomKey("git", BuildGit.VALUE)
-                setCustomKey("uname.release", Os.uname().release)
-                setCustomKey("build", Build.DISPLAY)
-                setCustomKey("ro.vendor.api_level", SystemProperties.get("ro.vendor.api_level", ""))
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setCustomKey("extension_s", SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S))
-                }
-            } else isCrashlyticsCollectionEnabled = false
-        }
+        //FirebaseCrashlytics.getInstance().apply {
+        //    if (isDebug != null) {
+        //        setCustomKey("debug", isDebug)
+        //        setCustomKey("git", BuildGit.VALUE)
+        //        setCustomKey("uname.release", Os.uname().release)
+        //        setCustomKey("build", Build.DISPLAY)
+        //        setCustomKey("ro.vendor.api_level", SystemProperties.get("ro.vendor.api_level", ""))
+        //        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        //            setCustomKey("extension_s", SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S))
+        //        }
+        //    } else isCrashlyticsCollectionEnabled = false
+        //}
         Timber.plant(object : Timber.DebugTree() {
             @SuppressLint("LogNotTimber")
             override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
                 if (t == null) {
                     if (priority != Log.DEBUG || BuildConfig.DEBUG) Log.println(priority, tag, message)
-                    FirebaseCrashlytics.getInstance().log("${"XXVDIWEF".getOrElse(priority) { 'X' }}/$tag: $message")
+                    //FirebaseCrashlytics.getInstance().log("${"XXVDIWEF".getOrElse(priority) { 'X' }}/$tag: $message")
                 } else {
                     if (priority >= Log.WARN || priority == Log.DEBUG) Log.println(priority, tag, message)
                     if (priority >= Log.INFO && t !is NoShellException) {
-                        val crashlyticsKeys = (t as? CrashlyticsKeyProvider)?.crashlyticsKeys
-                            ?: (t.getRootCause() as? ServiceSpecificException)?.let {
-                                CustomKeysAndValues.Builder()
-                                    .putInt("android.serviceSpecific.errorCode", it.errorCode)
-                                    .build()
-                            }
-                        val reported = if (t.stackTrace.isEmpty()) {
-                            RuntimeException("Stackless exception reported through Timber", t)
-                        } else t
-                        if (crashlyticsKeys == null) FirebaseCrashlytics.getInstance().recordException(reported)
-                        else FirebaseCrashlytics.getInstance().recordException(reported, crashlyticsKeys)
+                        // Exception logging to Crashlytics removed
                     }
                 }
             }
@@ -150,11 +140,12 @@ class App : Application() {
      * This method is used to log "expected" and well-handled errors, i.e. we care less about logs, etc.
      * logException is inappropriate sometimes because it flushes all logs that could be used to investigate other bugs.
      */
-    fun logEvent(@Size(min = 1L, max = 40L) event: String, block: ParametersBuilder.() -> Unit = { }) {
-        FirebaseAnalytics.getInstance(app).logEvent(event) {
-            block(this)
-            Timber.i(if (bundle.isEmpty) event else "$event, extras: $bundle")
-        }
+    class EventBuilder {
+        fun param(key: String, value: String) {}
+    }
+
+    fun logEvent(event: String, block: EventBuilder.() -> Unit = {}) {
+        // Analytics disabled
     }
 
     /**

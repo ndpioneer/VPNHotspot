@@ -6,8 +6,8 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import com.google.firebase.crashlytics.CustomKeysAndValues
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+//import com.google.firebase.crashlytics.CustomKeysAndValues
+//import com.google.firebase.crashlytics.FirebaseCrashlytics
 import leakcanary.EventListener
 import leakcanary.LeakCanary
 import shark.Leak
@@ -38,57 +38,13 @@ class LeakCanaryInstaller : ContentProvider() {
                                             " [${leak.signature}]")
                                 exception.stackTrace = arrayOf(StackTraceElement("LeakCanary", "${type}Leak",
                                     leak.signature.take(255), 1))
-                                FirebaseCrashlytics.getInstance().recordException(exception,
-                                    CustomKeysAndValues.Builder().apply {
-                                        putString("leakcanary.analysis", "success")
-                                        putString("leakcanary.type", type)
-                                        putString("leakcanary.signature", leak.signature.take(1024))
-                                        firstTrace?.let { trace ->
-                                            putString("leakcanary.gcRootType", trace.gcRootType.name)
-                                            putString("leakcanary.leakingClass", trace.leakingObject.className.take(1024))
-                                            traceSummary?.let { putString("leakcanary.traceSummary", it) }
-                                            for (label in trace.leakingObject.labels) {
-                                                when {
-                                                    label.startsWith("watchDurationMillis = ") -> {
-                                                        label.substringAfter(" = ").toLongOrNull()?.let {
-                                                            putLong("leakcanary.watchDurationMillis", it)
-                                                        }
-                                                    }
-                                                    label.startsWith("retainedDurationMillis = ") -> {
-                                                        label.substringAfter(" = ").toLongOrNull()?.let {
-                                                            putLong("leakcanary.retainedDurationMillis", it)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        putInt("leakcanary.applicationLeakCount", appLeaks.size)
-                                        putInt("leakcanary.libraryLeakCount", libLeaks.size)
-                                        putInt("leakcanary.traceCount", leak.leakTraces.size)
-                                        leak.totalRetainedHeapByteSize?.let {
-                                            putLong("leakcanary.retainedHeapByteSize", it.toLong())
-                                        }
-                                        leak.totalRetainedObjectCount?.let {
-                                            putLong("leakcanary.retainedObjectCount", it.toLong())
-                                        }
-                                        putString("leakcanary.heapDumpFile", heapAnalysis.heapDumpFile.name.take(1024))
-                                        putLong("leakcanary.dumpDurationMillis", heapAnalysis.dumpDurationMillis)
-                                        putLong("leakcanary.analysisDurationMillis",
-                                            heapAnalysis.analysisDurationMillis)
-                                    }.build())
                             }
                         }
                     }
 
                     is EventListener.Event.HeapAnalysisDone.HeapAnalysisFailed -> {
                         val heapAnalysis = event.heapAnalysis
-                        FirebaseCrashlytics.getInstance().recordException(heapAnalysis.exception,
-                            CustomKeysAndValues.Builder().apply {
-                                putString("leakcanary.analysis", "failure")
-                                putString("leakcanary.heapDumpFile", heapAnalysis.heapDumpFile.name.take(1024))
-                                putLong("leakcanary.dumpDurationMillis", heapAnalysis.dumpDurationMillis)
-                                putLong("leakcanary.analysisDurationMillis", heapAnalysis.analysisDurationMillis)
-                            }.build())
+
                     }
 
                     else -> Unit

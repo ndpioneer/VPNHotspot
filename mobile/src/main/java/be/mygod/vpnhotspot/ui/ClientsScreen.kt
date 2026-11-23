@@ -71,6 +71,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.text.NumberFormat
+import java.net.Inet6Address
 
 @Composable
 fun ClientsScreen(model: ClientViewModel, snackbarHostState: SnackbarHostState) {
@@ -192,11 +193,25 @@ private fun ClientRow(
         if (Build.VERSION.SDK_INT >= 37) client.wifiP2pConnectionInfo?.let { info ->
             wifiP2pConnectionInfoLabel(context, info)?.let { line { append(it) } }
         }
+        val fe80State = client.ip.entries.firstOrNull {
+            it.key is Inet6Address && it.key.isLinkLocalAddress
+        }?.value?.state
+
         client.ip.entries.forEach { (ip, info) ->
             line {
                 appendIpAddress(ip, linkStyles)
                 info.address?.let { append("/${it.prefixLength}") }
-                append(when (info.state) {
+
+                // If global IPv6 still says VALID but link-local fe80:: is dead or failed, follow fe80
+                val effectiveState = if (ip is Inet6Address && !ip.isLinkLocalAddress &&
+                    info.state == NeighbourState.NEIGHBOUR_STATE_VALID &&
+                    fe80State != null && fe80State != NeighbourState.NEIGHBOUR_STATE_VALID) {
+                    fe80State
+                } else {
+                    info.state
+                }
+
+                append(when (effectiveState) {
                     NeighbourState.NEIGHBOUR_STATE_UNSET -> ""
                     NeighbourState.NEIGHBOUR_STATE_INCOMPLETE -> neighbourStateIncomplete
                     NeighbourState.NEIGHBOUR_STATE_VALID -> neighbourStateValid

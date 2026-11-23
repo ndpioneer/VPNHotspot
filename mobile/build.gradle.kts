@@ -18,9 +18,9 @@ import org.gradle.jvm.tasks.Jar
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
-    alias(libs.plugins.crashlytics)
+    // alias(libs.plugins.crashlytics)
     alias(libs.plugins.ksp)
-    alias(libs.plugins.google.services)
+    // alias(libs.plugins.google.services)
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.wire)
     id("com.google.android.gms.oss-licenses-plugin")
@@ -230,8 +230,8 @@ android {
         applicationId = "be.mygod.vpnhotspot"
         minSdk = 29
         targetSdk = 37
-        versionCode = 2011
-        versionName = "3.0.8"
+        versionCode = 2012
+        versionName = "3.0.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     splits {
@@ -253,6 +253,7 @@ android {
         release {
             isShrinkResources = true
             isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("debug")
             // BuildGit already records the commit; AGP's VCS tag task fails when Git packs branch refs.
             vcsInfo.include = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -366,8 +367,8 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.browser)
     implementation(libs.core)
-    implementation(libs.firebase.analytics)
-    implementation(libs.firebase.crashlytics)
+    // implementation(libs.firebase.analytics)
+    // implementation(libs.firebase.crashlytics)
     implementation(libs.hiddenapibypass)
     implementation(libs.ktor.io.jvm)
     implementation(libs.kotlinx.collections.immutable)

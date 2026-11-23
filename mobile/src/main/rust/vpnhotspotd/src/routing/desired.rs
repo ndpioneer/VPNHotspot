@@ -352,6 +352,25 @@ impl Runtime {
                     })),
                 );
             }
+            // Clamp TCP MSS to Path MTU for forwarded IPv6 packets
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Iptables(IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "mangle",
+                    "FORWARD",
+                    vec![
+                        "-p".into(),
+                        "tcp".into(),
+                        "--tcp-flags".into(),
+                        "SYN,RST".into(),
+                        "SYN".into(),
+                        "-j".into(),
+                        "TCPMSS".into(),
+                        "--clamp-mss-to-pmtu".into(),
+                    ],
+                )),
+            );
             // Block Android system RouterAdvertisementDaemon from broadcasting carrier RAs on downstream
             push_unique(
                 &mut mutations,

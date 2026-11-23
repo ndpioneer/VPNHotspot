@@ -216,7 +216,7 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
             }
         }
         preferenceGroup(title = R.string.settings_downstream) {
-            row(R.string.settings_service_masquerade) {
+            if (!disableIpv4) row(R.string.settings_service_masquerade) {
                 ListPreferenceRow(
                     icon = R.drawable.ic_nat,
                     title = R.string.settings_service_masquerade,
