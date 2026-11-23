@@ -193,20 +193,21 @@ private fun ClientRow(
         if (Build.VERSION.SDK_INT >= 37) client.wifiP2pConnectionInfo?.let { info ->
             wifiP2pConnectionInfoLabel(context, info)?.let { line { append(it) } }
         }
-        val fe80State = client.ip.entries.firstOrNull {
-            it.key is Inet6Address && it.key.isLinkLocalAddress
-        }?.value?.state
+        val hasValidFe80 = client.ip.entries.any {
+            it.key is Inet6Address && it.key.isLinkLocalAddress && it.value.state == NeighbourState.NEIGHBOUR_STATE_VALID
+        }
 
         client.ip.entries.forEach { (ip, info) ->
             line {
                 appendIpAddress(ip, linkStyles)
                 info.address?.let { append("/${it.prefixLength}") }
 
-                // If global IPv6 still says VALID but link-local fe80:: is dead or failed, follow fe80
-                val effectiveState = if (ip is Inet6Address && !ip.isLinkLocalAddress &&
-                    info.state == NeighbourState.NEIGHBOUR_STATE_VALID &&
-                    fe80State != null && fe80State != NeighbourState.NEIGHBOUR_STATE_VALID) {
-                    fe80State
+                val effectiveState = if (ip is Inet6Address && !ip.isLinkLocalAddress) {
+                    if (!hasValidFe80) {
+                        NeighbourState.NEIGHBOUR_STATE_FAILED
+                    } else {
+                        info.state
+                    }
                 } else {
                     info.state
                 }

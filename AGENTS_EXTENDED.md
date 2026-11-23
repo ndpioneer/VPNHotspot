@@ -42,8 +42,10 @@ When `config.routed_ipv6_prefix` is present:
      `-o <downstream> -p icmpv6 --icmpv6-type router-advertisement -m mark ! --mark 0x00030063/0x0003ffff -j DROP`
    - Blocks Android's system `RouterAdvertisementDaemon` from broadcasting carrier-delegated cellular IPv6 prefixes onto the downstream Wi-Fi interface.
 5. **Firewall Forwarding:** Ensures `vpnhotspot_forward` chain in `filter` table allows bidirectional IPv6 forwarding matching `<prefix>` without any MASQUERADE or NAT.
-6. **IPv4 Bypass:** When `config.disable_ipv4 == true`:
-   - All IPv4 iptables chains (`vpnhotspot_dns_nat`, `vpnhotspot_dns_input`, `vpnhotspot_acl`, `vpnhotspot_stats`, `vpnhotspot_masquerade`), IPv4 policy rules, and IPv4 client forward rules are completely bypassed.
+6. **Active IPv4 Suppression & DHCPv4 Blocking:** When `config.disable_ipv4 == true`:
+   - Bypasses all normal IPv4 routing chains, policy rules, and client forwarding.
+   - Installs active packet drop rules in `raw` (`PREROUTING`) and `filter` (`INPUT`, `OUTPUT`) for UDP port 67, preventing Android's system DHCP server from leasing IPv4 addresses to downstream clients.
+   - Installs active drop rules in `raw` and `filter` across `INPUT`, `FORWARD`, and `OUTPUT` on the downstream interface to completely suppress all downstream IPv4 traffic.
 
 ---
 

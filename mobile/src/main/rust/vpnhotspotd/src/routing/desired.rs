@@ -178,6 +178,28 @@ impl Runtime {
                     }
                 }
             }
+        } else {
+            // Actively suppress DHCPv4 server & all downstream IPv4 forwarding
+            for (table, chain, args) in [
+                ("raw", "PREROUTING", vec!["-i".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--dport".into(), "67".into(), "-j".into(), "DROP".into()]),
+                ("filter", "INPUT", vec!["-i".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--dport".into(), "67".into(), "-j".into(), "DROP".into()]),
+                ("filter", "OUTPUT", vec!["-o".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--sport".into(), "67".into(), "-j".into(), "DROP".into()]),
+                ("raw", "PREROUTING", vec!["-i".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
+                ("filter", "INPUT", vec!["-i".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
+                ("filter", "FORWARD", vec!["-i".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
+                ("filter", "FORWARD", vec!["-o".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
+                ("filter", "OUTPUT", vec!["-o".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
+            ] {
+                push_unique(
+                    &mut mutations,
+                    RoutingMutation::Iptables(IptablesRule::new(
+                        IptablesTarget::Ipv4,
+                        table,
+                        chain,
+                        args,
+                    )),
+                );
+            }
         }
         if config.ipv6_block {
             push_unique(
