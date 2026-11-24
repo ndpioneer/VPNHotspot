@@ -51,6 +51,25 @@ impl Runtime {
                     chain: "vpnhotspot_dns_nat",
                 },
             );
+            // Clamp TCP MSS to Path MTU for forwarded IPv4 packets
+            push_unique(
+                &mut mutations,
+                RoutingMutation::Iptables(IptablesRule::new(
+                    IptablesTarget::Ipv4,
+                    "mangle",
+                    "FORWARD",
+                    vec![
+                        "-p".into(),
+                        "tcp".into(),
+                        "--tcp-flags".into(),
+                        "SYN,RST".into(),
+                        "SYN".into(),
+                        "-j".into(),
+                        "TCPMSS".into(),
+                        "--clamp-mss-to-pmtu".into(),
+                    ],
+                )),
+            );
             push_unique(
                 &mut mutations,
                 RoutingMutation::EnsureIptablesChain {
@@ -181,9 +200,13 @@ impl Runtime {
         } else {
             // Actively suppress DHCPv4 server & all downstream IPv4 forwarding
             for (table, chain, args) in [
+                // Block incoming client DHCP requests
                 ("raw", "PREROUTING", vec!["-i".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--dport".into(), "67".into(), "-j".into(), "DROP".into()]),
                 ("filter", "INPUT", vec!["-i".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--dport".into(), "67".into(), "-j".into(), "DROP".into()]),
+                // Block outgoing system DHCP offers/acks (both sport 67 and dport 68)
                 ("filter", "OUTPUT", vec!["-o".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--sport".into(), "67".into(), "-j".into(), "DROP".into()]),
+                ("filter", "OUTPUT", vec!["-o".into(), config.downstream.clone(), "-p".into(), "udp".into(), "--dport".into(), "68".into(), "-j".into(), "DROP".into()]),
+                // Block all downstream IPv4 forwarding and local traffic
                 ("raw", "PREROUTING", vec!["-i".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
                 ("filter", "INPUT", vec!["-i".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
                 ("filter", "FORWARD", vec!["-i".into(), config.downstream.clone(), "-j".into(), "DROP".into()]),
@@ -333,15 +356,17 @@ impl Runtime {
                 intercept_mode,
             );
         }
-        if let Some(routed_prefix) = config.routed_ipv6_prefix {
-            let mut gw_bytes = routed_prefix.first_address().octets();
-            gw_bytes[15] = 1;
-            let downstream_gw = Ipv6Addr::from(gw_bytes);
+        if let Some(routed_prefix) = &config.routed_ipv6_prefix {
+            let downstream_ip = {
+                let mut octets = routed_prefix.first_address().octets();
+                octets[15] = 1;
+                Ipv6Addr::from(octets)
+            };
             push_unique(
                 &mut mutations,
                 RoutingMutation::Ip(IpCommand::Address(IpAddressCommand {
                     operation: IpOperation::Replace,
-                    address: IpAddr::V6(downstream_gw),
+                    address: IpAddr::V6(downstream_ip),
                     prefix_len: routed_prefix.network_length(),
                     interface: config.downstream.clone(),
                 })),

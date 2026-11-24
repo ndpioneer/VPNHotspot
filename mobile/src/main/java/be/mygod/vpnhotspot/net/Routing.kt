@@ -307,19 +307,45 @@ class Routing(private val caller: Any, private val downstream: String) {
     ) = MutableScatterSet<String>().let { seen ->
         val primaryInterfaces = primaryUpstream.appendInterfaces(seen)
         val fallbackInterfaces = fallbackUpstream.appendInterfaces(seen)
+        val customPrefix = app.pref.getString("service.ipv6.routed_prefix", null)?.trim()?.takeIf { it.isNotEmpty() }
         val routedPrefix = if (ipv6Mode == Ipv6Mode.Routed) {
-                        primaryUpstream.upstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
-                                val addr = linkAddress.address
-                                addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress && linkAddress.prefixLength == 64
-                            }?.let { linkAddress ->
-                                Ipv6Prefix(linkAddress.address.address.toByteString(), linkAddress.prefixLength)
-                            }
-                    } else null
-                val routedDns = if (ipv6Mode == Ipv6Mode.Routed) {
-                        val dns = primaryUpstream.upstream?.properties?.dnsServers?.firstOrNull { it is Inet6Address }
-                            ?: java.net.InetAddress.getByName("2606:4700:4700::1111")
-                        dns.address.toByteString()
-                    } else null
+            if (customPrefix != null) {
+                try {
+                    val parts = customPrefix.split("/")
+                    val addr = java.net.InetAddress.getByName(parts[0])
+                    val length = parts.getOrNull(1)?.toIntOrNull() ?: 64
+                    Ipv6Prefix(addr.address.toByteString(), length)
+                } catch (e: Exception) {
+                    Timber.w(e, "Invalid custom IPv6 prefix: $customPrefix")
+                    null
+                }
+            } else {
+                // 1. Try to find an explicit /64 first
+                val exact64 = primaryUpstream.upstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
+                    val addr = linkAddress.address
+                    addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress && linkAddress.prefixLength == 64
+                }
+                if (exact64 != null) {
+                    Ipv6Prefix(exact64.address.address.toByteString(), 64)
+                } else {
+                    // 2. Fallback: derive /64 from any global IPv6 address (e.g. WireGuard /128)
+                    primaryUpstream.upstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
+                        val addr = linkAddress.address
+                        addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress
+                    }?.let { linkAddress ->
+                        val raw = linkAddress.address.address.copyOf()
+                        // Zero out lower 64 bits to form the /64 network prefix
+                        for (i in 8 until 16) raw[i] = 0
+                        Ipv6Prefix(raw.toByteString(), 64)
+                    }
+                }
+            }
+        } else null
+        val routedDns = if (ipv6Mode == Ipv6Mode.Routed) {
+            val dns = primaryUpstream.upstream?.properties?.dnsServers?.firstOrNull { it is Inet6Address }
+                ?: java.net.InetAddress.getByName("2606:4700:4700::1111")
+            dns.address.toByteString()
+        } else null
         SessionConfig(
             downstream = downstream,
             ip_forward = ipForward,

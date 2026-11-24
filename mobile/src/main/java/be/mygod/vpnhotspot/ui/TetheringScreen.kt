@@ -131,6 +131,7 @@ fun TetheringScreen(
     onStartRepeaterWps: (String?) -> Unit,
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val inspectionMode = LocalInspectionMode.current
     val linkStyles = rememberNetworkAddressLinkStyles()
     val staticIpActive by StaticIpSetter.active.collectAsStateWithLifecycle()
@@ -144,6 +145,10 @@ fun TetheringScreen(
     ) {
         TextFieldState(staticIpDraft.orEmpty())
     }
+    LaunchedEffect(tetheringServiceState) {
+        kotlinx.coroutines.delay(300)
+        onRefresh()
+    }
     var wpsDialog by rememberSaveable { mutableStateOf(false) }
     var wpsPin by rememberTextFieldValueAtEnd("", wpsDialog)
     val tetherTypeVersion by if (inspectionMode) remember { mutableIntStateOf(0) } else rememberTetherTypeVersion()
@@ -151,12 +156,14 @@ fun TetheringScreen(
     val manageOffloadEnabled = if (inspectionMode) false else remember(manageBarVersion) {
         TetherOffloadManager.enabled
     }
+    val primaryUpstream by Upstreams.primary.collectAsStateWithLifecycle()
     val ifaceLookup = remember(
         tetherStates,
         tetheringServiceState,
         localOnlyIface,
         repeaterGroup,
         interfaceRefreshVersion,
+        primaryUpstream,
     ) {
         networkInterfaceLookup()
     }
@@ -193,14 +200,6 @@ fun TetheringScreen(
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
-                kotlinx.coroutines.delay(5000)
-                onRefresh()
-            }
-        }
-    }
     DisposableEffect(lifecycleOwner, bluetoothTethering) {
         var resumed = false
         fun refreshBluetooth() {
@@ -350,10 +349,21 @@ fun TetheringScreen(
                                 checked = vpnTethering,
                                 enabled = !ifaceInactive,
                                 onClick = {
-                                    if (active) context.startService(Intent(context, TetheringService::class.java)
-                                        .putExtra(TetheringService.EXTRA_REMOVE_INTERFACE, iface))
-                                    else context.startForegroundService(Intent(context, TetheringService::class.java)
-                                        .putExtra(TetheringService.EXTRA_ADD_INTERFACES, arrayOf(iface)))
+                                    if (active) {
+                                        context.startService(Intent(context, TetheringService::class.java)
+                                            .putExtra(TetheringService.EXTRA_REMOVE_INTERFACE, iface))
+                                        onRefresh()
+                                    } else {
+                                        context.startForegroundService(Intent(context, TetheringService::class.java)
+                                            .putExtra(TetheringService.EXTRA_ADD_INTERFACES, arrayOf(iface)))
+                                        coroutineScope.launch {
+                                            // Progressive polling during daemon setup
+                                            kotlinx.coroutines.delay(500)
+                                            onRefresh()
+                                            kotlinx.coroutines.delay(1000)
+                                            onRefresh()
+                                        }
+                                    }
                                 },
                             )
                         }
@@ -362,10 +372,20 @@ fun TetheringScreen(
                                 title = stringResource(R.string.tethering_watch_reconnect),
                                 checked = watch,
                                 onCheckedChange = {
-                                    if (watch) context.startService(Intent(context, TetheringService::class.java)
-                                        .putExtra(TetheringService.EXTRA_REMOVE_INTERFACE_MONITOR, iface))
-                                    else context.startForegroundService(Intent(context, TetheringService::class.java)
-                                        .putExtra(TetheringService.EXTRA_ADD_INTERFACE_MONITOR, iface))
+                                    if (watch) {
+                                        context.startService(Intent(context, TetheringService::class.java)
+                                            .putExtra(TetheringService.EXTRA_REMOVE_INTERFACE_MONITOR, iface))
+                                        onRefresh()
+                                    } else {
+                                        context.startForegroundService(Intent(context, TetheringService::class.java)
+                                            .putExtra(TetheringService.EXTRA_ADD_INTERFACE_MONITOR, iface))
+                                        coroutineScope.launch {
+                                            kotlinx.coroutines.delay(500)
+                                            onRefresh()
+                                            kotlinx.coroutines.delay(1000)
+                                            onRefresh()
+                                        }
+                                    }
                                 },
                             )
                         }
@@ -875,25 +895,40 @@ private fun networkInterfaceAddressesText(
     if (!macOnly && iface != null) for (address in iface.interfaceAddresses) {
         val ip = address.address
         if (RoutingManager.disableIpv4 && ip is Inet4Address) continue
+
         if (RoutingManager.ipv6Mode == Ipv6Mode.Routed && ip is Inet6Address && !ip.isLinkLocalAddress && !ip.isLoopbackAddress) {
-            val primaryUpstream = Upstreams.primary.value
-            val routedPrefixBytes = primaryUpstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
-                val addr = linkAddress.address
-                addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress && linkAddress.prefixLength == 64
-            }?.address?.address
+            val customPrefix = app.pref.getString("service.ipv6.routed_prefix", null)?.trim()?.takeIf { it.isNotEmpty() }
+            val routedPrefixBytes = if (customPrefix != null) {
+                try {
+                    java.net.InetAddress.getByName(customPrefix.split("/")[0]).address
+                } catch (_: Exception) { null }
+            } else {
+                val primaryUpstream = Upstreams.primary.value
+                primaryUpstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
+                    val addr = linkAddress.address
+                    addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress
+                }?.let { linkAddress ->
+                    val raw = linkAddress.address.address.copyOf()
+                    for (i in 8 until 16) raw[i] = 0
+                    raw
+                }
+            }
             if (routedPrefixBytes != null) {
-                // Compare first 8 bytes (/64 prefix)
-                val ipBytes = ip.address
-                var match = true
+                var matches = true
                 for (i in 0 until 8) {
-                    if (ipBytes[i] != routedPrefixBytes[i]) {
-                        match = false
+                    if (ip.address[i] != routedPrefixBytes[i]) {
+                        matches = false
                         break
                     }
                 }
-                if (!match) continue // Skip carrier IPv6 address!
+                if (!matches) continue // Drop any foreign/carrier IPv6 addresses!
+            } else {
+                // If in Routed mode but upstream prefix is not yet discovered,
+                // do NOT display random carrier IPv6 addresses on downstream tethering cards
+                continue
             }
         }
+
         if (length > 0) append('\n')
         appendIpAddress(address.address, linkStyles)
         address.networkPrefixLength.also {

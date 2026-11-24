@@ -136,6 +136,9 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
     val useSystemTempHotspot by if (inspectionMode) {
         remember { mutableStateOf(false) }
     } else rememberPreferenceBoolean(LocalOnlyHotspotService.KEY_USE_SYSTEM, false)
+    val routedPrefixPreference by if (inspectionMode) {
+        remember { mutableStateOf<String?>(null) }
+    } else rememberPreferenceString("service.ipv6.routed_prefix")
 
     if (!inspectionMode) {
         LaunchedEffect(Unit) {
@@ -253,6 +256,27 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
                         if (!inspectionMode) RoutingManager.disableIpv4 = enabled
                     },
                     )
+            }
+            if (ipv6Mode == Ipv6Mode.Routed) {
+                row("settings_service_ipv6_routed_prefix") {
+                    PrefixPreferenceRow(
+                        icon = R.drawable.ic_counter_6,
+                        title = "Routed IPv6 Prefix",
+                        value = routedPrefixPreference.orEmpty(),
+                        summary = if (routedPrefixPreference.isNullOrBlank()) {
+                            "Auto-detect from upstream tunnel"
+                        } else {
+                            routedPrefixPreference!!
+                        },
+                        description = "Specify a custom delegated IPv6 prefix (e.g. 2001:db8:2::/64) for multi-subnet/transit setups. Leave blank to auto-detect from tunnel.",
+                        placeholder = "e.g. 2001:db8:2::/64",
+                        onValueChange = {
+                            if (!inspectionMode) {
+                                app.pref.edit { putString("service.ipv6.routed_prefix", it.ifBlank { null }) }
+                            }
+                        },
+                    )
+                }
             }
             row(R.string.settings_service_ipv6_mode) {
                 ListPreferenceRow(
@@ -685,6 +709,84 @@ private fun rememberPreferenceBoolean(key: String, defaultValue: Boolean): State
 private fun SettingsPreview() {
     VpnHotspotPreviewSurface {
         SettingsScreen(snackbarHostState = remember { SnackbarHostState() })
+    }
+}
+
+@Composable
+private fun PrefixPreferenceRow(
+    @DrawableRes icon: Int,
+    title: String,
+    value: String,
+    summary: String,
+    description: String,
+    placeholder: String,
+    onValueChange: (String) -> Unit,
+) {
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var draft by rememberTextFieldValueAtEnd(value, editing)
+    val focusRequester = rememberDialogFocusRequester()
+
+    val draftText = draft.text.trim()
+    val isValid = draftText.isEmpty() || try {
+        val parts = draftText.split("/")
+        val addr = java.net.InetAddress.getByName(parts[0])
+        val len = parts.getOrNull(1)?.toIntOrNull() ?: 64
+        addr is java.net.Inet6Address && len in 1..128
+    } catch (_: Exception) {
+        false
+    }
+
+    PreferenceRow(
+        icon = icon,
+        title = title,
+        summaryContent = { Text(summary) },
+        onClick = { editing = true },
+    )
+
+    if (editing) {
+        AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text(title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester),
+                        placeholder = { Text(placeholder) },
+                        colors = OutlinedTextFieldDefaults.tonalColors(),
+                        shape = OutlinedTextFieldDefaults.roundedShape,
+                        singleLine = true,
+                        isError = !isValid,
+                        supportingText = if (!isValid) {
+                            { Text("Invalid IPv6 CIDR format (e.g. 2001:db8:1::/64)", color = MaterialTheme.colorScheme.error) }
+                        } else null,
+                    )
+                }
+            },
+            confirmButton = {
+                DialogConfirmButton(
+                    enabled = isValid,
+                    onClick = {
+                        onValueChange(draft.text.trim())
+                        editing = false
+                    },
+                ) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
+            dismissButton = {
+                DialogDismissButton(onClick = { editing = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        )
     }
 }
 
