@@ -251,7 +251,10 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
                     title = stringResource(R.string.settings_service_disable_ipv4),
                     summary = stringResource(R.string.settings_service_disable_ipv4_summary),
                     checked = disableIpv4,
-                    onCheckedChange = { disableIpv4 = it },
+                    onCheckedChange = {
+                        RoutingManager.disableIpv4 = it
+                        disableIpv4 = it
+                    },
                 )
             }
             if (ipv6Mode == Ipv6Mode.Routed) {
