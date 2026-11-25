@@ -151,12 +151,14 @@ pub(crate) fn spawn_loop(
                     };
                 let active_network = current
                     .routed_ipv6_prefix
+                    .map(|p| p.network())
                     .or_else(|| current.ipv6_nat.as_ref().map(|n| n.gateway.network()));
                 if let Some(our_network) = active_network {
                     for prefix in mtu_prefixes {
                         if prefix.network() != our_network {
                             suppressed_prefixes.insert(prefix, now + SUPPRESSED_RA_WINDOW);
                             send_current = true;
+                            purge_downstream_carrier_address(&mut netlink, &current.downstream, prefix).await;
                         }
                     }
                 }
@@ -601,7 +603,7 @@ async fn send_ra(
 ) -> Result<(), RaSendError> {
     let (prefix, dns_server) = if let Some(routed_prefix) = config.routed_ipv6_prefix {
         let dns = config.routed_ipv6_dns.unwrap_or(router.address);
-        (routed_prefix, dns)
+        (routed_prefix.network(), dns)
     } else if let Some(ipv6_nat) = config.ipv6_nat.as_ref() {
         (ipv6_nat.gateway.network(), ipv6_nat.gateway.address())
     } else {
@@ -629,4 +631,34 @@ async fn send_zero_lifetime_ra(
     let destination = router_advertisement_destination(None, router.interface_index);
     let packet = make_zero_lifetime_ra_packet(prefix, mtu, keep_router);
     send_packet_to(socket, &packet, SockAddr::from(destination)).await
+}
+
+async fn purge_downstream_carrier_address(
+    handle: &mut netlink::RequestConnection,
+    interface: &str,
+    prefix: Ipv6Inet,
+) {
+    let interface_index = match netlink::link_index(handle, interface).await {
+        Ok(index) => index,
+        Err(_) => return,
+    };
+    let addresses = match handle.dump_addresses(interface_index).await {
+        Ok(addresses) => addresses,
+        Err(_) => return,
+    };
+    for message in addresses {
+        if message.header.family != AddressFamily::Inet6 {
+            continue;
+        }
+        if let Some(downstream_pfx) = downstream_ipv6_prefix(&message) {
+            if downstream_pfx == prefix {
+                let _ = handle.delete_address(message).await;
+                report::stdout!(
+                    "ra purged carrier address {} from {}",
+                    prefix.address(),
+                    interface
+                );
+            }
+        }
+    }
 }

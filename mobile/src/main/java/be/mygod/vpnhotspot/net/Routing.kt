@@ -36,6 +36,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.ByteString.Companion.toByteString
@@ -50,6 +53,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class Routing(private val caller: Any, private val downstream: String) {
     companion object {
+        private val _routingVersion = MutableStateFlow(0)
+        val routingVersion = _routingVersion.asStateFlow()
+
         private val ipv6NatPrefixSeed: String
             @SuppressLint("HardwareIds")
             get() = "${app.packageName}\u0000${
@@ -59,6 +65,7 @@ class Routing(private val caller: Any, private val downstream: String) {
         suspend fun clean() {
             TrafficRecorder.clean()
             DaemonController.cleanRouting(ipv6NatPrefixSeed)
+            _routingVersion.update { it + 1 }
         }
     }
 
@@ -137,10 +144,11 @@ class Routing(private val caller: Any, private val downstream: String) {
                     }
                 }
                 session = DaemonController.startSession(nextConfig())
+                _routingVersion.update { it + 1 }
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     session.events.collect { event ->
                         val ipsecForwardPolicy = event.ipsec_forward_policy ?: throw IOException(
-                                "Unexpected session event $event")
+                            "Unexpected session event $event")
                         try {
                             RootManager.use { server ->
                                 server.execute(IpSecForwardPolicyCommand(ipsecForwardPolicy.uid,
@@ -277,6 +285,7 @@ class Routing(private val caller: Any, private val downstream: String) {
                         if (clients.isNotEmpty() || allowedMacs.isNotEmpty()) TrafficRecorder.update()
                         session?.close()
                     }
+                    _routingVersion.update { it + 1 }
                     Timber.i("Stopped routing for $downstream by $caller")
                 }
             }
@@ -314,30 +323,37 @@ class Routing(private val caller: Any, private val downstream: String) {
                     val parts = customPrefix.split("/")
                     val addr = java.net.InetAddress.getByName(parts[0])
                     val length = parts.getOrNull(1)?.toIntOrNull() ?: 64
-                    Ipv6Prefix(addr.address.toByteString(), length)
+                    val raw = addr.address.copyOf()
+                    // If user entered a plain network prefix ending in ::0, default downstream router to ::1
+                    val hasHostBits = (8 until 16).any { raw[it].toInt() != 0 }
+                    if (!hasHostBits) raw[15] = 1
+                    Ipv6Prefix(raw.toByteString(), length)
                 } catch (e: Exception) {
                     Timber.w(e, "Invalid custom IPv6 prefix: $customPrefix")
                     null
                 }
             } else {
-                // 1. Try to find an explicit /64 first
-                val exact64 = primaryUpstream.upstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
-                    val addr = linkAddress.address
-                    addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress && linkAddress.prefixLength == 64
+                // Auto mode: check if upstream tunnel (e.g. tun0) owns ::1 to prevent collision on device
+                val upstreamIpv6Addresses = primaryUpstream.upstream?.properties?.linkAddresses?.filter {
+                    val addr = it.address
+                    addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress
+                } ?: emptyList()
+
+                val upstreamOwnsHost1 = upstreamIpv6Addresses.any {
+                    val bytes = it.address.address
+                    bytes[15].toInt() == 1 && (8 until 15).all { i -> bytes[i].toInt() == 0 }
                 }
-                if (exact64 != null) {
-                    Ipv6Prefix(exact64.address.address.toByteString(), 64)
-                } else {
-                    // 2. Fallback: derive /64 from any global IPv6 address (e.g. WireGuard /128)
-                    primaryUpstream.upstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
-                        val addr = linkAddress.address
-                        addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress
-                    }?.let { linkAddress ->
-                        val raw = linkAddress.address.address.copyOf()
-                        // Zero out lower 64 bits to form the /64 network prefix
-                        for (i in 8 until 16) raw[i] = 0
-                        Ipv6Prefix(raw.toByteString(), 64)
-                    }
+
+                // 1. Try to find an explicit /64 first, or fallback to deriving /64 from /128
+                val baseAddress = upstreamIpv6Addresses.firstOrNull { it.prefixLength == 64 }?.address
+                    ?: upstreamIpv6Addresses.firstOrNull()?.address
+
+                baseAddress?.let { addr ->
+                    val raw = addr.address.copyOf()
+                    for (i in 8 until 15) raw[i] = 0
+                    // If tun0 owns ::1, assign ::2 to downstream Wi-Fi; otherwise assign ::1
+                    raw[15] = if (upstreamOwnsHost1) 2.toByte() else 1.toByte()
+                    Ipv6Prefix(raw.toByteString(), 64)
                 }
             }
         } else null

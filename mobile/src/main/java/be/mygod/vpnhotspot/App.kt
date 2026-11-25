@@ -35,12 +35,6 @@ import be.mygod.vpnhotspot.util.getRootCause
 import be.mygod.vpnhotspot.util.privateLookup
 import be.mygod.vpnhotspot.widget.SmartSnackbar
 import com.google.android.gms.dynamite.DynamiteModule
-//import com.google.firebase.analytics.FirebaseAnalytics
-//import com.google.firebase.analytics.ParametersBuilder
-//import com.google.firebase.analytics.logEvent
-//import com.google.firebase.crashlytics.CustomKeysAndValues
-//import com.google.firebase.crashlytics.FirebaseCrashlytics
-//import com.google.firebase.provider.FirebaseInitProvider
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
 import kotlinx.coroutines.GlobalScope

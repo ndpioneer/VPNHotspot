@@ -6,8 +6,6 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-//import com.google.firebase.crashlytics.CustomKeysAndValues
-//import com.google.firebase.crashlytics.FirebaseCrashlytics
 import leakcanary.EventListener
 import leakcanary.LeakCanary
 import shark.Leak

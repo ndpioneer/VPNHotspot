@@ -111,7 +111,7 @@ pub struct SessionConfig {
     pub clients: Vec<ClientConfig>,
     pub ipv6_nat: Option<Ipv6NatConfig>,
     pub disable_ipv4: bool,
-    pub routed_ipv6_prefix: Option<Ipv6Cidr>,
+    pub routed_ipv6_prefix: Option<Ipv6Inet>,
     pub routed_ipv6_dns: Option<Ipv6Addr>,
 }
 

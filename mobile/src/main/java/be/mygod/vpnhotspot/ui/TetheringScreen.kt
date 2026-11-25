@@ -92,6 +92,7 @@ import be.mygod.vpnhotspot.ui.theme.VpnHotspotPreviewSurface
 import be.mygod.vpnhotspot.util.Services
 import be.mygod.vpnhotspot.util.readableMessage
 import be.mygod.vpnhotspot.widget.SmartSnackbar
+import be.mygod.vpnhotspot.net.Routing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -145,8 +146,8 @@ fun TetheringScreen(
     ) {
         TextFieldState(staticIpDraft.orEmpty())
     }
-    LaunchedEffect(tetheringServiceState) {
-        kotlinx.coroutines.delay(300)
+    LaunchedEffect(tetherStates) {
+        kotlinx.coroutines.delay(300) // IPv6 DAD wait
         onRefresh()
     }
     var wpsDialog by rememberSaveable { mutableStateOf(false) }
@@ -157,6 +158,7 @@ fun TetheringScreen(
         TetherOffloadManager.enabled
     }
     val primaryUpstream by Upstreams.primary.collectAsStateWithLifecycle()
+    val routingVersion by Routing.routingVersion.collectAsStateWithLifecycle()
     val ifaceLookup = remember(
         tetherStates,
         tetheringServiceState,
@@ -164,6 +166,7 @@ fun TetheringScreen(
         repeaterGroup,
         interfaceRefreshVersion,
         primaryUpstream,
+        routingVersion,
     ) {
         networkInterfaceLookup()
     }

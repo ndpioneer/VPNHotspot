@@ -292,7 +292,7 @@ pub fn read_session_config(config: daemon::SessionConfig) -> io::Result<SessionC
     let routed_ipv6_prefix = config
         .routed_ipv6_prefix
         .as_ref()
-        .map(read_ipv6_prefix)
+        .map(read_ipv6_inet)
         .transpose()?;
     let routed_ipv6_dns = config
         .routed_ipv6_dns
@@ -336,6 +336,12 @@ fn read_ipv6_prefix(prefix: &daemon::Ipv6Prefix) -> io::Result<Ipv6Cidr> {
     Ok(Ipv6Inet::new(address, prefix_len)
         .expect("route prefix length was already validated")
         .network())
+}
+
+fn read_ipv6_inet(prefix: &daemon::Ipv6Prefix) -> io::Result<Ipv6Inet> {
+    let address = read_ipv6(&prefix.address, "IPv6 prefix address")?;
+    let prefix_len = read_prefix_len(prefix.prefix_length, 128, "IPv6 prefix length")?;
+    Ok(Ipv6Inet::new(address, prefix_len).expect("prefix length was already validated"))
 }
 
 pub fn read_ip_address_entry(entry: &daemon::IpAddressEntry) -> io::Result<(IpAddr, u8)> {

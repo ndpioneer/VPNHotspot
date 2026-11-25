@@ -246,21 +246,18 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
                 )
             }
             row(R.string.settings_service_disable_ipv4) {
-                SwitchPreferenceRow(
-                    icon = R.drawable.ic_nat,
-                    title = R.string.settings_service_disable_ipv4,
+                PreferenceSwitchRow(
+                    icon = R.drawable.ic_visibility_off,
+                    title = stringResource(R.string.settings_service_disable_ipv4),
                     summary = stringResource(R.string.settings_service_disable_ipv4_summary),
                     checked = disableIpv4,
-                    onCheckedChange = { enabled ->
-                        disableIpv4 = enabled
-                        if (!inspectionMode) RoutingManager.disableIpv4 = enabled
-                    },
-                    )
+                    onCheckedChange = { disableIpv4 = it },
+                )
             }
             if (ipv6Mode == Ipv6Mode.Routed) {
                 row("settings_service_ipv6_routed_prefix") {
                     PrefixPreferenceRow(
-                        icon = R.drawable.ic_counter_6,
+                        icon = R.drawable.ic_router,
                         title = "Routed IPv6 Prefix",
                         value = routedPrefixPreference.orEmpty(),
                         summary = if (routedPrefixPreference.isNullOrBlank()) {

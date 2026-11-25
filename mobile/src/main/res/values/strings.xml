@@ -266,7 +266,7 @@
     <string name="settings_service_masquerade_netd">Android Netd Service</string>
     <string name="settings_service_ipv6_mode">IPv6 mode</string>
     <!-- Android translation-index match: packages/apps/Dialer/java/com/android/dialer/historyitemactions/res/values/strings.xml:37 -->
-    <string name="settings_service_ipv6_mode_block">Block</string>
+    <string name="settings_service_ipv6_mode_block">Disabled</string>
     <!-- Android translation-index match: packages/apps/Settings/res/values/strings.xml:51 -->
     <string name="settings_service_ipv6_mode_system">System</string>
     <string name="settings_service_ipv6_mode_nat">NAT (Userspace)</string>

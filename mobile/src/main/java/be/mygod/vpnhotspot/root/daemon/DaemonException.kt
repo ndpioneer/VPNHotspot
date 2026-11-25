@@ -2,7 +2,6 @@ package be.mygod.vpnhotspot.root.daemon
 
 import android.os.RemoteException
 import be.mygod.vpnhotspot.util.CrashlyticsKeyProvider
-//import com.google.firebase.crashlytics.CustomKeysAndValues
 import java.io.IOException
 
 class DaemonException(

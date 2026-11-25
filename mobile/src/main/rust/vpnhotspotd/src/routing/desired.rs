@@ -357,11 +357,7 @@ impl Runtime {
             );
         }
         if let Some(routed_prefix) = &config.routed_ipv6_prefix {
-            let downstream_ip = {
-                let mut octets = routed_prefix.first_address().octets();
-                octets[15] = 1;
-                Ipv6Addr::from(octets)
-            };
+            let downstream_ip = routed_prefix.address();
             push_unique(
                 &mut mutations,
                 RoutingMutation::Ip(IpCommand::Address(IpAddressCommand {
@@ -465,16 +461,16 @@ impl Runtime {
                     IptablesTarget::Ipv6,
                     "filter",
                     "vpnhotspot_forward",
-                    vec![
-                        "-i".into(),
-                        config.downstream.clone(),
-                        "-s".into(),
-                        routed_prefix.to_string(),
-                        "-j".into(),
-                        "ACCEPT".into(),
-                    ],
-                )),
-            );
+                vec![
+                            "-s".into(),
+                            routed_prefix.network().to_string(),
+                            "-i".into(),
+                            config.downstream.clone(),
+                            "-j".into(),
+                            "ACCEPT".into(),
+                        ],
+                    )),
+                );
             push_unique(
                 &mut mutations,
                 RoutingMutation::Iptables(IptablesRule::new(
@@ -482,10 +478,10 @@ impl Runtime {
                     "filter",
                     "vpnhotspot_forward",
                     vec![
+                        "-d".into(),
+                        routed_prefix.network().to_string(),
                         "-o".into(),
                         config.downstream.clone(),
-                        "-d".into(),
-                        routed_prefix.to_string(),
                         "-j".into(),
                         "ACCEPT".into(),
                     ],
