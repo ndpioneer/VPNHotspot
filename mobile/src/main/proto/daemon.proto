@@ -70,6 +70,7 @@ enum MasqueradeMode {
 message ClientConfig {
   bytes mac = 1;
   repeated bytes ipv4 = 2;
+  repeated bytes ipv6 = 3;
 }
 
 message Ipv6NatConfig {
@@ -147,6 +148,7 @@ message TrafficCounterSource {
   oneof source {
     bytes ipv4_forward_address = 1;
     DaemonTrafficSource daemon_source = 2;
+    bytes ipv6_forward_address = 3;
   }
 }
 

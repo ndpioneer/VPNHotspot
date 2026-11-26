@@ -44,6 +44,7 @@ import kotlinx.coroutines.withContext
 import okio.ByteString.Companion.toByteString
 import timber.log.Timber
 import java.io.IOException
+import java.net.InetAddress
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.util.concurrent.atomic.AtomicBoolean
@@ -94,7 +95,7 @@ class Routing(private val caller: Any, private val downstream: String) {
     private val fallbackUpstream = UpstreamTracker()
     private val primaryUpstream = UpstreamTracker()
     private var upstreamGeneration = 0L
-    private val clients = MutableScatterMap<Inet4Address, MacAddress>()
+    private val clients = MutableScatterMap<InetAddress, MacAddress>()
     private val allowedMacs = MutableScatterSet<MacAddress>()
     private val started = AtomicBoolean()
     private val job = Job()
@@ -194,22 +195,25 @@ class Routing(private val caller: Any, private val downstream: String) {
                             }
                         }
                         if (upstreamChanged) ++upstreamGeneration
-                        var clientSnapshot: ScatterMap<Inet4Address, MacAddress> = clients
+                        var clientSnapshot: ScatterMap<InetAddress, MacAddress> = clients
                         var allowedMacSnapshot: ScatterSet<MacAddress> = allowedMacs
-                        var nextClients: ScatterMap<Inet4Address, MacAddress>? = null
+                        var nextClients: ScatterMap<InetAddress, MacAddress>? = null
                         var nextAllowedMacs: ScatterSet<MacAddress>? = null
-                        var added = MutableObjectList<Inet4Address>(0)
-                        var removed = MutableObjectList<Inet4Address>(0)
+                        var added = MutableObjectList<InetAddress>(0)
+                        var removed = MutableObjectList<InetAddress>(0)
                         var addedMacs = MutableObjectList<MacAddress>(0)
                         var removedMacs = MutableObjectList<MacAddress>(0)
                         val clientsChanged = if (clientPolicyChanged) {
-                            val candidateClients = MutableScatterMap<Inet4Address, MacAddress>(neighbours.size)
+                            val candidateClients = MutableScatterMap<InetAddress, MacAddress>(neighbours.size)
                             val candidateAllowedMacs = MutableScatterSet<MacAddress>()
                             for (neighbour in neighbours) {
                                 val lladdr = neighbour.validClientMac ?: continue
                                 if (neighbour.dev != downstream || lladdr in blockedMacs) continue
                                 candidateAllowedMacs.add(lladdr)
-                                if (neighbour.ip is Inet4Address) candidateClients[neighbour.ip] = lladdr
+                                val ip = neighbour.ip
+                                if (ip is Inet4Address || (ip is Inet6Address && !ip.isLinkLocalAddress && !ip.isLoopbackAddress)) {
+                                    candidateClients[ip] = lladdr
+                                }
                             }
                             if (candidateClients == clients && candidateAllowedMacs == allowedMacs) false else {
                                 removed = MutableObjectList(clients.size)
@@ -311,7 +315,7 @@ class Routing(private val caller: Any, private val downstream: String) {
     }
 
     private fun nextConfig(
-        clientSnapshot: ScatterMap<Inet4Address, MacAddress> = clients,
+        clientSnapshot: ScatterMap<InetAddress, MacAddress> = clients,
         allowedMacSnapshot: ScatterSet<MacAddress> = allowedMacs,
     ) = MutableScatterSet<String>().let { seen ->
         val primaryInterfaces = primaryUpstream.appendInterfaces(seen)
@@ -388,7 +392,12 @@ class Routing(private val caller: Any, private val downstream: String) {
                         mac = mac.toByteArray().toByteString(),
                         ipv4 = buildList(clientSnapshot.size) {
                             clientSnapshot.forEach { ip, clientMac ->
-                                if (clientMac == mac) add(ip.address.toByteString())
+                                if (clientMac == mac && ip is Inet4Address) add(ip.address.toByteString())
+                            }
+                        },
+                        ipv6 = buildList(clientSnapshot.size) {
+                            clientSnapshot.forEach { ip, clientMac ->
+                                if (clientMac == mac && ip is Inet6Address) add(ip.address.toByteString())
                             }
                         },
                     ))

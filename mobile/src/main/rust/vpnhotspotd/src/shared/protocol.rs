@@ -327,7 +327,12 @@ fn read_client(client: daemon::ClientConfig) -> io::Result<ClientConfig> {
         .iter()
         .map(|address| read_ipv4(address, "client IPv4 address"))
         .collect::<io::Result<_>>()?;
-    Ok(ClientConfig { mac, ipv4 })
+    let ipv6 = client
+        .ipv6
+        .iter()
+        .map(|address| read_ipv6(address, "client IPv6 address"))
+        .collect::<io::Result<_>>()?;
+    Ok(ClientConfig { mac, ipv4, ipv6 })
 }
 
 fn read_ipv6_prefix(prefix: &daemon::Ipv6Prefix) -> io::Result<Ipv6Cidr> {
@@ -484,6 +489,7 @@ mod tests {
             clients: vec![daemon::ClientConfig {
                 mac: vec![2, 3, 5, 7, 11, 13],
                 ipv4: Vec::new(),
+                ipv6: Vec::new(),
             }],
             ..Default::default()
         })

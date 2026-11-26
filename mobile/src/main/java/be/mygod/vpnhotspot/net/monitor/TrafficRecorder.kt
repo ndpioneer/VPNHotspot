@@ -225,6 +225,10 @@ object TrafficRecorder {
             if (it.size != 4) return@let null
             val ip = InetAddress.getByAddress(it.toByteArray())
             CounterSource(ip, null)
+        } ?: counterSource?.ipv6_forward_address?.let {
+            if (it.size != 16) return@let null
+            val ip = InetAddress.getByAddress(it.toByteArray())
+            CounterSource(ip, null)
         } ?: counterSource?.daemon_source?.marker?.let { CounterSource(TrafficRecord.DAEMON_SOURCE_ADDRESS, it) }
     }
 

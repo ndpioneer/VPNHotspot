@@ -137,6 +137,7 @@ pub struct SelectedNetwork {
 pub struct ClientConfig {
     pub mac: [u8; 6],
     pub ipv4: Vec<Ipv4Addr>,
+    pub ipv6: Vec<Ipv6Addr>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

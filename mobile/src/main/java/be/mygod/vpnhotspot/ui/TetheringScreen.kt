@@ -146,9 +146,23 @@ fun TetheringScreen(
     ) {
         TextFieldState(staticIpDraft.orEmpty())
     }
-    LaunchedEffect(tetherStates) {
-        kotlinx.coroutines.delay(300) // IPv6 DAD wait
+    val isAnyTethered = remember(tetherStates, localOnlyIface, repeaterActive) {
+        tetherStates.tethered.isNotEmpty() || !localOnlyIface.isNullOrEmpty() || repeaterActive == true
+    }
+    val routingVersion by Routing.routingVersion.collectAsStateWithLifecycle()
+    LaunchedEffect(isAnyTethered, routingVersion) {
         onRefresh()
+        kotlinx.coroutines.delay(400) // Catches routed IPv6 prefix clearing DAD
+        onRefresh()
+        kotlinx.coroutines.delay(1000) // Catches carrier address purge deletion
+        onRefresh()
+        if (isAnyTethered) {
+            // Keep interface card in sync with real-time kernel address state while screen is visible
+            while (true) {
+                kotlinx.coroutines.delay(3000)
+                onRefresh()
+            }
+        }
     }
     var wpsDialog by rememberSaveable { mutableStateOf(false) }
     var wpsPin by rememberTextFieldValueAtEnd("", wpsDialog)
@@ -158,7 +172,6 @@ fun TetheringScreen(
         TetherOffloadManager.enabled
     }
     val primaryUpstream by Upstreams.primary.collectAsStateWithLifecycle()
-    val routingVersion by Routing.routingVersion.collectAsStateWithLifecycle()
     val ifaceLookup = remember(
         tetherStates,
         tetheringServiceState,
@@ -898,39 +911,6 @@ private fun networkInterfaceAddressesText(
     if (!macOnly && iface != null) for (address in iface.interfaceAddresses) {
         val ip = address.address
         if (RoutingManager.disableIpv4 && ip is Inet4Address) continue
-
-        if (RoutingManager.ipv6Mode == Ipv6Mode.Routed && ip is Inet6Address && !ip.isLinkLocalAddress && !ip.isLoopbackAddress) {
-            val customPrefix = app.pref.getString("service.ipv6.routed_prefix", null)?.trim()?.takeIf { it.isNotEmpty() }
-            val routedPrefixBytes = if (customPrefix != null) {
-                try {
-                    java.net.InetAddress.getByName(customPrefix.split("/")[0]).address
-                } catch (_: Exception) { null }
-            } else {
-                val primaryUpstream = Upstreams.primary.value
-                primaryUpstream?.properties?.linkAddresses?.firstOrNull { linkAddress ->
-                    val addr = linkAddress.address
-                    addr is Inet6Address && !addr.isLinkLocalAddress && !addr.isLoopbackAddress
-                }?.let { linkAddress ->
-                    val raw = linkAddress.address.address.copyOf()
-                    for (i in 8 until 16) raw[i] = 0
-                    raw
-                }
-            }
-            if (routedPrefixBytes != null) {
-                var matches = true
-                for (i in 0 until 8) {
-                    if (ip.address[i] != routedPrefixBytes[i]) {
-                        matches = false
-                        break
-                    }
-                }
-                if (!matches) continue // Drop any foreign/carrier IPv6 addresses!
-            } else {
-                // If in Routed mode but upstream prefix is not yet discovered,
-                // do NOT display random carrier IPv6 addresses on downstream tethering cards
-                continue
-            }
-        }
 
         if (length > 0) append('\n')
         appendIpAddress(address.address, linkStyles)

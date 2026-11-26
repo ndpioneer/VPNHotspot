@@ -448,6 +448,14 @@ impl Runtime {
             );
             push_unique(
                 &mut mutations,
+                RoutingMutation::EnsureIptablesChain {
+                    target: IptablesTarget::Ipv6,
+                    table: "filter",
+                    chain: "vpnhotspot_stats",
+                },
+            );
+            push_unique(
+                &mut mutations,
                 RoutingMutation::Iptables(IptablesRule::new(
                     IptablesTarget::Ipv6,
                     "filter",
@@ -461,16 +469,16 @@ impl Runtime {
                     IptablesTarget::Ipv6,
                     "filter",
                     "vpnhotspot_forward",
-                vec![
-                            "-s".into(),
-                            routed_prefix.network().to_string(),
-                            "-i".into(),
-                            config.downstream.clone(),
-                            "-j".into(),
-                            "ACCEPT".into(),
-                        ],
-                    )),
-                );
+                    vec![
+                        "-s".into(),
+                        routed_prefix.network().to_string(),
+                        "-i".into(),
+                        config.downstream.clone(),
+                        "-j".into(),
+                        "vpnhotspot_stats".into(),
+                    ],
+                )),
+            );
             push_unique(
                 &mut mutations,
                 RoutingMutation::Iptables(IptablesRule::new(
@@ -483,12 +491,13 @@ impl Runtime {
                         "-o".into(),
                         config.downstream.clone(),
                         "-j".into(),
-                        "ACCEPT".into(),
+                        "vpnhotspot_stats".into(),
                     ],
                 )),
             );
         }
         let mut client_ip_v4 = Vec::new();
+        let mut client_ip_v6 = Vec::new();
         let mut client_macs_v6 = Vec::new();
         for client in &config.clients {
             if !config.disable_ipv4 {
@@ -499,6 +508,19 @@ impl Runtime {
                     client_ip_v4.push((client.mac, *address));
                     for rule in
                         Self::client_ipv4_forward_rules(config, client.mac, *address)
+                    {
+                        push_unique(&mut mutations, RoutingMutation::Iptables(rule));
+                    }
+                }
+            }
+            if config.routed_ipv6_prefix.is_some() {
+                for address in &client.ipv6 {
+                    if client_ip_v6.contains(&(client.mac, *address)) {
+                        continue;
+                    }
+                    client_ip_v6.push((client.mac, *address));
+                    for rule in
+                        Self::client_ipv6_stats_rules(config, client.mac, *address)
                     {
                         push_unique(&mut mutations, RoutingMutation::Iptables(rule));
                     }
@@ -956,6 +978,47 @@ impl Runtime {
             ),
         ]
     }
+
+    pub(super) fn client_ipv6_stats_rules(
+            config: &SessionConfig,
+            mac: [u8; 6],
+            address: Ipv6Addr,
+        ) -> Vec<IptablesRule> {
+            let mac = mac_string(&mac);
+            let address = address.to_string();
+            vec![
+                IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "filter",
+                    "vpnhotspot_stats",
+                    vec![
+                        "-i".into(),
+                        config.downstream.clone(),
+                        "-m".into(),
+                        "mac".into(),
+                        "--mac-source".into(),
+                        mac,
+                        "-s".into(),
+                        address.clone(),
+                        "-j".into(),
+                        "ACCEPT".into(),
+                    ],
+                ),
+                IptablesRule::new(
+                    IptablesTarget::Ipv6,
+                    "filter",
+                    "vpnhotspot_stats",
+                    vec![
+                        "-o".into(),
+                        config.downstream.clone(),
+                        "-d".into(),
+                        address,
+                        "-j".into(),
+                        "ACCEPT".into(),
+                    ],
+                ),
+            ]
+        }
 
     fn client_mac_v6_rule(mac: [u8; 6]) -> IptablesRule {
         IptablesRule::new(
